@@ -73,12 +73,50 @@ function VideoReplacementModal({
     onClose: () => void
 }) {
     const [previewUrl, setPreviewUrl] = useState<string>('')
+    const [searchQuery, setSearchQuery] = useState<string>('')
+    const [searchResults, setSearchResults] = useState<VideoOption[]>([])
+    const [searchLoading, setSearchLoading] = useState(false)
+    const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
         if (options.length > 0 && !previewUrl) {
             setPreviewUrl(options[0].url)
         }
     }, [options, previewUrl])
+
+    // Debounced search handler
+    const handleSearch = (query: string) => {
+        setSearchQuery(query)
+        
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current)
+        }
+
+        if (!query.trim()) {
+            setSearchResults([])
+            return
+        }
+
+        setSearchLoading(true)
+        searchTimeoutRef.current = setTimeout(async () => {
+            try {
+                const res = await apiPost<VideoOptionsResponse>('/video-options', {
+                    keywords: query,
+                    context_text: segment?.text || '',
+                    min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
+                    limit: 12,
+                    exclude_urls: [],
+                })
+                setSearchResults(res.options || [])
+            } catch (e) {
+                setSearchResults([])
+            } finally {
+                setSearchLoading(false)
+            }
+        }, 500) // 500ms debounce
+    }
+
+    const displayOptions = searchQuery.trim() ? searchResults : options
 
     if (!isOpen || !segment) return null
 
@@ -138,7 +176,7 @@ function VideoReplacementModal({
                 </div>
 
                 {/* Options side */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16, borderLeft: '1px solid var(--border)', overflow: 'auto', maxHeight: '90vh' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16, borderLeft: '1px solid var(--border)', overflow: 'hidden' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ fontSize: 14, fontWeight: 600 }}>Videos disponibles</div>
                         <button
@@ -155,17 +193,45 @@ function VideoReplacementModal({
                         </button>
                     </div>
 
-                    {loading && (
-                        <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>Cargando opciones...</div>
+                    {/* Search Input */}
+                    <input
+                        type="text"
+                        placeholder="🔍 Buscar videos..."
+                        value={searchQuery}
+                        onChange={(e) => handleSearch(e.target.value)}
+                        style={{
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 6,
+                            padding: '8px 12px',
+                            color: 'var(--text)',
+                            fontSize: 13,
+                            outline: 'none',
+                            transition: 'all 0.2s',
+                        }}
+                        onFocus={(e) => {
+                            (e.target as HTMLInputElement).style.borderColor = 'var(--accent)'
+                            (e.target as HTMLInputElement).style.background = 'rgba(255,255,255,0.08)'
+                        }}
+                        onBlur={(e) => {
+                            (e.target as HTMLInputElement).style.borderColor = 'var(--border)'
+                            (e.target as HTMLInputElement).style.background = 'rgba(255,255,255,0.05)'
+                        }}
+                    />
+
+                    {(loading || searchLoading) && (
+                        <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>⏳ Buscando videos...</div>
                     )}
 
-                    {!loading && options.length === 0 && (
-                        <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>No hay opciones de video</div>
+                    {!loading && !searchLoading && displayOptions.length === 0 && (
+                        <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>
+                            {searchQuery.trim() ? 'No se encontraron videos' : 'No hay opciones de video'}
+                        </div>
                     )}
 
-                    {!loading && (
-                        <div style={{ display: 'grid', gap: 8 }}>
-                            {options.map((opt) => (
+                    {!loading && !searchLoading && displayOptions.length > 0 && (
+                        <div style={{ display: 'grid', gap: 8, overflow: 'auto', maxHeight: 'calc(90vh - 200px)' }}>
+                            {displayOptions.map((opt) => (
                                 <button
                                     key={opt.url}
                                     onClick={() => {
