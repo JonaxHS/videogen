@@ -187,6 +187,7 @@ export default function App() {
     const [jobId, setJobId] = useState<string | null>(null)
     const [job, setJob] = useState<Job | null>(null)
     const [loading, setLoading] = useState(false)
+    const [playingPreview, setPlayingPreview] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const sseRef = useRef<EventSource | null>(null)
 
@@ -262,6 +263,47 @@ export default function App() {
             setLoading(false)
         }
     }, [script, selectedVoice, rate, showSubtitles])
+
+    const handlePreviewVoice = async () => {
+        setPlayingPreview(true)
+        setError(null)
+
+        const previewText = segments.length > 0
+            ? segments[0].text
+            : "Hola, esta es una prueba de cómo suena mi voz para tu generador de videos."
+
+        try {
+            const res = await fetch('/api/preview-voice', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: previewText,
+                    voice: selectedVoice,
+                    rate: rate
+                })
+            })
+
+            if (!res.ok) {
+                throw new Error("No se pudo generar el preview de la voz")
+            }
+
+            const blob = await res.blob()
+            const url = URL.createObjectURL(blob)
+            const audio = new Audio(url)
+
+            audio.onended = () => {
+                setPlayingPreview(false)
+                URL.revokeObjectURL(url)
+            }
+
+            await audio.play()
+        } catch (err: any) {
+            setError(err.message || 'Error al escuchar la voz')
+            setPlayingPreview(false)
+        }
+    }
 
     const wordCount = script.trim() ? script.trim().split(/\s+/).length : 0
     const estTotalDuration = segments.reduce((acc, s) => acc + s.estimated_duration, 0)
@@ -368,6 +410,14 @@ export default function App() {
                                         ? voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)
                                         : <option value="es-MX-DaliaNeural">Dalia (Mujer · México)</option>}
                                 </select>
+                                <button
+                                    className="btn-secondary"
+                                    onClick={handlePreviewVoice}
+                                    disabled={playingPreview || !!isRunning}
+                                    style={{ marginTop: '8px' }}
+                                >
+                                    {playingPreview ? '🔊 Reproduciendo...' : '▶️ Escuchar prueba'}
+                                </button>
                             </div>
 
                             <div className="field">

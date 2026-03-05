@@ -65,6 +65,12 @@ class GenerateResponse(BaseModel):
 class SetupRequest(BaseModel):
     pexels_api_key: str
 
+class VoicePreviewRequest(BaseModel):
+    text: str
+    voice: str
+    rate: str = "+0%"
+    pitch: str = "+0Hz"
+
 
 # ─────────────────────────────────────────────
 # Endpoints
@@ -127,6 +133,29 @@ def _write_env(updates: dict):
 @app.get("/api/voices")
 def voices():
     return {"voices": get_available_voices()}
+
+
+@app.post("/api/preview-voice")
+def preview_voice(req: VoicePreviewRequest):
+    """Generate and return a short audio preview for a specific voice setting."""
+    text = req.text.strip()
+    if not text:
+        text = "Hola, esta es una prueba de cómo suena esta voz en tu generador de videos."
+    
+    preview_id = str(uuid.uuid4())
+    preview_path = str(TEMP_DIR / f"preview_{preview_id}.mp3")
+    
+    try:
+        generate_audio_sync(
+            text=text,
+            output_path=preview_path,
+            voice=req.voice,
+            rate=req.rate,
+            pitch=req.pitch
+        )
+        return FileResponse(preview_path, media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error previewing voice: {str(e)}")
 
 
 @app.post("/api/generate", response_model=GenerateResponse)

@@ -327,6 +327,35 @@ body {
     transform: translateX(20px);
 }
 
+/* ─── Buttons ─────────────────────────────────────────── */
+.btn-secondary {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-2);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--bg-input);
+    color: var(--text-1);
+    border-color: var(--accent);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* ─── Generate Button ─────────────────────────────────────────── */
 .btn-generate {
     width: 100%;
