@@ -18,45 +18,167 @@ STOP_WORDS = {
 }
 
 TERM_MAP = {
+    # Astronomy/Space
     "estrella": "star",
+    "estrellas": "stars",
     "galaxia": "galaxy",
     "universo": "universe",
     "planeta": "planet",
     "espacio": "space",
+    "lunar": "moon",
+    "luna": "moon",
+    "sol": "sun",
+    "meteorito": "meteor",
+    "cometa": "comet",
+    
+    # Science/Physics
     "átomo": "atom",
     "atomo": "atom",
     "energía": "energy",
     "energia": "energy",
     "tiempo": "time",
     "ciencia": "science",
+    "ley": "law",
+    "leyes": "laws",
+    "terminámica": "thermodynamics",
+    "termodinamica": "thermodynamics",
+    "física": "physics",
+    "fisica": "physics",
+    "caos": "chaos",
+    "orden": "order",
+    
+    # Technology
     "tecnología": "technology",
     "tecnologia": "technology",
-    "naturaleza": "nature",
-    "océano": "ocean",
-    "oceano": "ocean",
-    "bosque": "forest",
-    "ciudad": "city",
-    "futuro": "future",
-    "historia": "history",
-    "humano": "human",
-    "humanidad": "humanity",
-    "guerra": "war",
-    "paz": "peace",
-    "economía": "economy",
-    "economia": "economy",
-    "dinero": "money",
-    "salud": "health",
-    "médico": "medical",
-    "medico": "medical",
-    "comida": "food",
-    "viaje": "travel",
-    "trabajo": "work",
-    "educación": "education",
-    "educacion": "education",
     "inteligencia": "intelligence",
     "artificial": "artificial",
     "robot": "robot",
     "digital": "digital",
+    "computadora": "computer",
+    "máquina": "machine",
+    "maquina": "machine",
+    
+    # Nature
+    "naturaleza": "nature",
+    "océano": "ocean",
+    "oceano": "ocean",
+    "bosque": "forest",
+    "árbol": "tree",
+    "arbol": "tree",
+    "árboles": "trees",
+    "arboles": "trees",
+    "montaña": "mountain",
+    "montana": "mountain",
+    "río": "river",
+    "rio": "river",
+    "lluvia": "rain",
+    "agua": "water",
+    "fuego": "fire",
+    "tierra": "earth",
+    "suelo": "ground",
+    "paisaje": "landscape",
+    "planta": "plant",
+    "flores": "flowers",
+    "flor": "flower",
+    
+    # Human/Society
+    "humano": "human",
+    "humanidad": "humanity",
+    "personas": "people",
+    "persona": "person",
+    "sociedad": "society",
+    "cultura": "culture",
+    "familia": "family",
+    "comunidad": "community",
+    "población": "population",
+    "poblacion": "population",
+    
+    # Conflict/Peace
+    "guerra": "war",
+    "paz": "peace",
+    "conflicto": "conflict",
+    "batalla": "battle",
+    "violencia": "violence",
+    
+    # Economy/Money
+    "economía": "economy",
+    "economia": "economy",
+    "dinero": "money",
+    "dineros": "money",
+    "riqueza": "wealth",
+    "pobreza": "poverty",
+    "comercio": "commerce",
+    
+    # Health/Medicine
+    "salud": "health",
+    "médico": "medical",
+    "medico": "medical",
+    "medicina": "medicine",
+    "hospital": "hospital",
+    "enfermedad": "disease",
+    "dolencia": "ailment",
+    "cura": "cure",
+    
+    # Time/History
+    "futuro": "future",
+    "pasado": "past",
+    "presente": "present",
+    "historia": "history",
+    "tiempo": "time",
+    "era": "era",
+    "época": "epoch",
+    "epuca": "epoch",
+    
+    # Abstract Concepts
+    "caos": "chaos",
+    "orden": "order",
+    "libertad": "freedom",
+    "justicia": "justice",
+    "verdad": "truth",
+    "mentira": "lie",
+    "amor": "love",
+    "miedo": "fear",
+    "esperanza": "hope",
+    "alegría": "joy",
+    "alegria": "joy",
+    "tristeza": "sadness",
+    "belleza": "beauty",
+    "fealdad": "ugliness",
+    
+    # Geography/Places
+    "ciudad": "city",
+    "campo": "countryside",
+    "rural": "rural",
+    "isla": "island",
+    "desierto": "desert",
+    "glaciar": "glacier",
+    "volcán": "volcano",
+    "volcan": "volcano",
+    "cueva": "cave",
+    "playa": "beach",
+    "costa": "coast",
+    
+    # Action/Movement
+    "movimiento": "movement",
+    "movimiento": "movement",
+    "velocidad": "speed",
+    "correr": "run",
+    "saltar": "jump",
+    "volar": "fly",
+    "nadar": "swim",
+    "caer": "fall",
+    "subir": "climb",
+    
+    # Color/Light
+    "luz": "light",
+    "oscuridad": "darkness",
+    "color": "color",
+    "rojo": "red",
+    "azul": "blue",
+    "verde": "green",
+    "amarillo": "yellow",
+    "blanco": "white",
+    "negro": "black",
 }
 
 
@@ -367,17 +489,31 @@ def _build_query_candidates(keywords: str, context_text: str, fallback_keywords:
             all_terms.append(term)
 
     candidates = []
+    
+    # Multi-keyword searches first (best results)
     if keyword_terms:
         candidates.append(" ".join(keyword_terms[:3]))
-    if translated_terms:
-        candidates.append(" ".join(translated_terms[:3]))
+        candidates.append(" ".join(keyword_terms[:4]))
+        candidates.append(" ".join(keyword_terms[:6]))  # Increased to use all 6 primary keywords
+    
+    # Combined keyword + context searches
     if all_terms:
-        candidates.append(" ".join(all_terms[:2]))
         candidates.append(" ".join(all_terms[:3]))
         candidates.append(" ".join(all_terms[:4]))
+        candidates.append(" ".join(all_terms[:5]))
+    
+    # Translated (English) searches for broader results
     if translated_terms:
-        candidates.append(" ".join(translated_terms[:2]))
+        candidates.append(" ".join(translated_terms[:3]))
         candidates.append(" ".join(translated_terms[:4]))
+        candidates.append(" ".join(translated_terms[:6]))
+    
+    # Individual keyword searches (fallback for exact matches)
+    for i, term in enumerate(keyword_terms[:4]):
+        if term not in [c for candidate in candidates for c in candidate.split()]:
+            candidates.append(term)
+    
+    # Fallback
     if fallback_keywords:
         candidates.append(fallback_keywords)
 

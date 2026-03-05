@@ -137,23 +137,23 @@ def extract_keywords(text: str) -> str:
         'to', 'for', 'of', 'with', 'is', 'are', 'was', 'were',
     }
 
-    # Tokenize: split on spaces and punctuation
-    words = re.findall(r'\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑA-Za-z]{4,}\b', text)
+    # Tokenize: split on spaces and punctuation (min 3 chars to avoid articles)
+    words = re.findall(r'\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑA-Za-z]{3,}\b', text)
     keywords = [w.lower() for w in words if w.lower() not in stop_words]
 
-    # Deduplicate and take top 3
+    # Deduplicate while preserving order (keep first 6 for better search coverage)
     seen = set()
     unique = []
     for kw in keywords:
         if kw not in seen:
             seen.add(kw)
             unique.append(kw)
-        if len(unique) >= 3:
+        if len(unique) >= 6:
             break
 
-    # Fallback to first 2 content words if nothing found
+    # Fallback to first content words if nothing found
     if not unique:
-        all_words = text.split()[:3]
-        unique = [w.lower() for w in all_words]
+        all_words = [w.lower() for w in text.split()[:5]]
+        unique = all_words if all_words else ['video']
 
     return ' '.join(unique)
