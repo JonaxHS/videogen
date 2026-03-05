@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Optional
 
 
 # Output video settings
@@ -16,10 +16,66 @@ OUTPUT_HEIGHT = 1920
 FPS = 30
 OUTPUT_FORMAT = "mp4"
 
-# Subtitle styling
-SUBTITLE_FONT_SIZE = 60
-SUBTITLE_COLOR = "white"
-SUBTITLE_BG_COLOR = "black@0.5"
+# Subtitle styles: {name: {fontsize, color, bgcolor, position, extra_params}}
+SUBTITLE_STYLES = {
+    "classic": {
+        "fontsize": 60,
+        "fontcolor": "white",
+        "boxcolor": "black@0.55",
+        "position": "bottom",
+        "line_spacing": 8,
+        "boxborderw": 12,
+        "extra": ""
+    },
+    "luminous": {
+        "fontsize": 58,
+        "fontcolor": "white",
+        "boxcolor": "black@0.7",
+        "position": "bottom",
+        "line_spacing": 8,
+        "boxborderw": 14,
+        "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.8"
+    },
+    "cinema": {
+        "fontsize": 72,
+        "fontcolor": "white",
+        "boxcolor": "transparent",
+        "position": "bottom",
+        "line_spacing": 10,
+        "boxborderw": 0,
+        "extra": ":shadowx=3:shadowy=3:shadowcolor=black@0.9"
+    },
+    "yellow-subtitle": {
+        "fontsize": 54,
+        "fontcolor": "yellow",
+        "boxcolor": "black@0.6",
+        "position": "bottom",
+        "line_spacing": 8,
+        "boxborderw": 10,
+        "extra": ""
+    },
+    "minimal": {
+        "fontsize": 48,
+        "fontcolor": "white",
+        "boxcolor": "black@0.3",
+        "position": "top",
+        "line_spacing": 6,
+        "boxborderw": 8,
+        "extra": ""
+    },
+    "neon": {
+        "fontsize": 64,
+        "fontcolor": "cyan",
+        "boxcolor": "black@0.8",
+        "position": "bottom",
+        "line_spacing": 8,
+        "boxborderw": 10,
+        "extra": ":shadowx=2:shadowy=2:shadowcolor=cyan@0.5"
+    },
+}
+
+# Default style
+DEFAULT_SUBTITLE_STYLE = "classic"
 
 
 def compose_video(
@@ -27,6 +83,7 @@ def compose_video(
     output_path: str,
     progress_callback: Callable[[int, str], None] = None,
     show_subtitles: bool = True,
+    subtitle_style: str = DEFAULT_SUBTITLE_STYLE,
 ) -> str:
     """
     Compose all segments into a final reel video using FFmpeg.
@@ -37,9 +94,16 @@ def compose_video(
       - text: str
       - audio_duration: float (seconds)
 
+    Args:
+      subtitle_style: one of the keys in SUBTITLE_STYLES
+    
     Returns path to the final video file.
     """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    # Validate subtitle style
+    if subtitle_style not in SUBTITLE_STYLES:
+        subtitle_style = DEFAULT_SUBTITLE_STYLE
 
     temp_dir = Path(output_path).parent / "temp_segments"
     temp_dir.mkdir(exist_ok=True)
@@ -62,6 +126,7 @@ def compose_video(
             audio_duration=seg["audio_duration"],
             output_path=str(seg_path),
             show_subtitles=show_subtitles,
+            subtitle_style=subtitle_style,
         )
         segment_files.append(str(seg_path))
 
@@ -101,6 +166,8 @@ def compose_video(
 
     return output_path
 
+    return output_path
+
 
 def _compose_segment(
     video_path: str,
@@ -109,12 +176,13 @@ def _compose_segment(
     audio_duration: float,
     output_path: str,
     show_subtitles: bool,
+    subtitle_style: str = DEFAULT_SUBTITLE_STYLE,
 ) -> None:
     """
     Compose a single segment:
     1. Crop/scale video to 9:16 (1080x1920)
     2. Trim video to audio duration
-    3. Overlay subtitle text at bottom
+    3. Overlay subtitle text with selected style
     4. Mix with TTS audio
     """
     # FFmpeg filter chain:
@@ -127,6 +195,41 @@ def _compose_segment(
             words = text.split()
             safe_text = _escape_ffmpeg_text(' '.join(words[:20]) + '...')
 
+        # Get style config
+        style = SUBTITLE_STYLES.get(subtitle_style, SUBTITLE_STYLES[DEFAULT_SUBTITLE_STYLE])
+        fontsize = style["fontsize"]
+        fontcolor = style["fontcolor"]
+        boxcolor = style["boxcolor"]
+        position = style["position"]
+        line_spacing = style["line_spacing"]
+        boxborderw = style["boxborderw"]
+        extra = style["extra"]
+
+        # Calculate Y position based on position parameter
+        if position == "top":
+            y_pos = "100"
+        elif position == "center":
+            y_pos = "(h-text_h)/2"
+        else:  # bottom (default)
+            y_pos = "h-text_h-120"
+
+        # Build drawtext filter with box
+        drawtext_filter = (
+            f"drawtext="
+            f"text='{safe_text}':"
+            f"fontcolor={fontcolor}:"
+            f"fontsize={fontsize}:"
+            f"box=1:"
+            f"boxcolor={boxcolor}:"
+            f"boxborderw={boxborderw}:"
+            f"x=(w-text_w)/2:"
+            f"y={y_pos}:"
+            f"line_spacing={line_spacing}:"
+            f"font=Sans:"
+            f"fix_bounds=true"
+            f"{extra}"
+        )
+
         filter_complex = (
             f"[0:v]"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
@@ -134,18 +237,7 @@ def _compose_segment(
             f"fps={FPS}"
             f"[scaled];"
             f"[scaled]"
-            f"drawtext="
-            f"text='{safe_text}':"
-            f"fontcolor=white:"
-            f"fontsize={SUBTITLE_FONT_SIZE}:"
-            f"box=1:"
-            f"boxcolor=black@0.55:"
-            f"boxborderw=12:"
-            f"x=(w-text_w)/2:"
-            f"y=h-text_h-120:"
-            f"line_spacing=8:"
-            f"font=Sans:"
-            f"fix_bounds=true"
+            f"{drawtext_filter}"
             f"[out]"
         )
     else:

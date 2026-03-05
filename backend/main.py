@@ -65,6 +65,7 @@ class GenerateRequest(BaseModel):
     rate: str = "+0%"
     pitch: str = "+0Hz"
     show_subtitles: bool = True
+    subtitle_style: str = "classic"
     selected_videos: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -242,6 +243,7 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         rate=req.rate,
         pitch=req.pitch,
         show_subtitles=req.show_subtitles,
+        subtitle_style=req.subtitle_style,
         selected_videos=req.selected_videos,
     )
 
@@ -333,7 +335,7 @@ def download(job_id: str):
 # Generation Worker
 # ─────────────────────────────────────────────
 
-def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, selected_videos: Optional[Dict[str, str]] = None):
+def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, subtitle_style: str = "classic", selected_videos: Optional[Dict[str, str]] = None):
     """Background task: TTS + video search + composition."""
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
@@ -408,6 +410,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             output_path,
             progress_callback=progress_cb,
             show_subtitles=show_subtitles,
+            subtitle_style=subtitle_style,
         )
 
         job["status"] = "done"

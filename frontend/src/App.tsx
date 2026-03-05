@@ -560,6 +560,7 @@ export default function App() {
     const [voices, setVoices] = useState<VoicesResponse>({ elevenlabs: [], deepgram: [], free: [] })
     const [selectedVoice, setSelectedVoice] = useState('ErXwobaYiN019PkySvjV')
     const [showSubtitles, setShowSubtitles] = useState(true)
+    const [subtitleStyle, setSubtitleStyle] = useState('classic')
     const [rate, setRate] = useState('+0%')
     const [jobId, setJobId] = useState<string | null>(null)
     const [job, setJob] = useState<Job | null>(null)
@@ -695,6 +696,7 @@ export default function App() {
                 voice: selectedVoice,
                 rate,
                 show_subtitles: showSubtitles,
+                subtitle_style: subtitleStyle,
                 selected_videos: Object.fromEntries(
                     Object.entries(selectedVideos).map(([k, v]) => [String(k), v])
                 ),
@@ -705,7 +707,7 @@ export default function App() {
             setError(e instanceof Error ? e.message : 'Error desconocido')
             setLoading(false)
         }
-    }, [script, selectedVoice, rate, showSubtitles, selectedVideos])
+    }, [script, selectedVoice, rate, showSubtitles, subtitleStyle, selectedVideos])
 
     const handlePreviewVoice = async () => {
         setPlayingPreview(true)
@@ -918,6 +920,35 @@ export default function App() {
                                     <Toggle on={showSubtitles} onToggle={() => setShowSubtitles(p => !p)} />
                                 </div>
                             </div>
+
+                            {showSubtitles && (
+                                <div className="field">
+                                    <label htmlFor="subtitle-style">🎨 Estilo de subtítulos</label>
+                                    <select
+                                        id="subtitle-style"
+                                        value={subtitleStyle}
+                                        onChange={e => setSubtitleStyle(e.target.value)}
+                                        disabled={!!isRunning}
+                                        style={{
+                                            background: 'var(--bg-input)',
+                                            border: '1px solid var(--border)',
+                                            borderRadius: 6,
+                                            padding: '8px 12px',
+                                            color: 'var(--text)',
+                                            fontSize: 13,
+                                            cursor: 'pointer',
+                                            outline: 'none',
+                                        }}
+                                    >
+                                        <option value="classic">📝 Clásico (Blanco/Negro)</option>
+                                        <option value="luminous">✨ Luminoso (Con sombra)</option>
+                                        <option value="cinema">🎬 Cine (Grande y nítido)</option>
+                                        <option value="yellow-subtitle">💛 Amarillo (Tradicional)</option>
+                                        <option value="minimal">🔍 Minimalista (Pequeño/Arriba)</option>
+                                        <option value="neon">💫 Neón (Cyan brillante)</option>
+                                    </select>
+                                </div>
+                            )}
                         </div>
                     </div>
 
