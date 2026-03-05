@@ -8,17 +8,16 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Fix: openai-whisper build needs pkg_resources (setuptools)
-
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Pin setuptools<70 so pkg_resources remains a top-level module
+# (openai-whisper setup.py imports pkg_resources which was broken in setuptools>=70)
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir "setuptools==68.2.2" wheel
 
 WORKDIR /app
 
-
 COPY requirements.txt .
-# openai-whisper uses legacy setup.py that needs pkg_resources;
-# --no-build-isolation makes it use the already-installed setuptools
-RUN pip install --no-cache-dir --no-build-isolation openai-whisper==20231117
+# Install openai-whisper first (legacy build, needs pinned setuptools above)
+RUN pip install --no-cache-dir openai-whisper==20231117
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
