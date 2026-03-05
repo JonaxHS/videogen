@@ -53,6 +53,33 @@ interface VideoOptionsResponse {
     options: VideoOption[]
 }
 
+const PREF_KEYS = {
+    selectedVoice: 'videogen:selectedVoice',
+    rate: 'videogen:rate',
+    showSubtitles: 'videogen:showSubtitles',
+    subtitleStyle: 'videogen:subtitleStyle',
+}
+
+function getStoredString(key: string, fallback: string): string {
+    try {
+        const value = localStorage.getItem(key)
+        return value ?? fallback
+    } catch {
+        return fallback
+    }
+}
+
+function getStoredBool(key: string, fallback: boolean): boolean {
+    try {
+        const value = localStorage.getItem(key)
+        if (value === 'true') return true
+        if (value === 'false') return false
+        return fallback
+    } catch {
+        return fallback
+    }
+}
+
 // ─── Components ───────────────────────────────────────────────────────────────
 
 function VideoReplacementModal({
@@ -558,10 +585,10 @@ export default function App() {
     const [loadingVideosBySeg, setLoadingVideosBySeg] = useState<Record<number, boolean>>({})
     const [previewingSeg, setPreviewingSeg] = useState<Segment | null>(null)
     const [voices, setVoices] = useState<VoicesResponse>({ elevenlabs: [], deepgram: [], free: [] })
-    const [selectedVoice, setSelectedVoice] = useState('ErXwobaYiN019PkySvjV')
-    const [showSubtitles, setShowSubtitles] = useState(true)
-    const [subtitleStyle, setSubtitleStyle] = useState('classic')
-    const [rate, setRate] = useState('+0%')
+    const [selectedVoice, setSelectedVoice] = useState(() => getStoredString(PREF_KEYS.selectedVoice, 'ErXwobaYiN019PkySvjV'))
+    const [showSubtitles, setShowSubtitles] = useState(() => getStoredBool(PREF_KEYS.showSubtitles, true))
+    const [subtitleStyle, setSubtitleStyle] = useState(() => getStoredString(PREF_KEYS.subtitleStyle, 'classic'))
+    const [rate, setRate] = useState(() => getStoredString(PREF_KEYS.rate, '+0%'))
     const [jobId, setJobId] = useState<string | null>(null)
     const [job, setJob] = useState<Job | null>(null)
     const [loading, setLoading] = useState(false)
@@ -588,13 +615,48 @@ export default function App() {
         apiGet<VoicesResponse>('/voices')
             .then(d => {
                 setVoices(d)
-                // If they don't have ElevenLabs configured, try to pick a free voice to avoid 401 errors by default
-                if (config && !config.elevenlabs_key_preview && d.free.length > 0) {
-                    setSelectedVoice(d.free[0].id)
-                }
+                const availableVoiceIds = new Set([
+                    ...d.elevenlabs.map(v => v.id),
+                    ...d.deepgram.map(v => v.id),
+                    ...d.free.map(v => v.id),
+                ])
+
+                setSelectedVoice(prev => {
+                    if (availableVoiceIds.has(prev)) {
+                        return prev
+                    }
+                    if (config && !config.elevenlabs_key_preview && d.free.length > 0) {
+                        return d.free[0].id
+                    }
+                    return d.elevenlabs[0]?.id || d.deepgram[0]?.id || d.free[0]?.id || prev
+                })
             })
             .catch(() => { })
     }, [config])
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(PREF_KEYS.selectedVoice, selectedVoice)
+        } catch { }
+    }, [selectedVoice])
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(PREF_KEYS.rate, rate)
+        } catch { }
+    }, [rate])
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(PREF_KEYS.showSubtitles, String(showSubtitles))
+        } catch { }
+    }, [showSubtitles])
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(PREF_KEYS.subtitleStyle, subtitleStyle)
+        } catch { }
+    }, [subtitleStyle])
 
     // Auto-preview segments as user types (debounced, canonical parse from backend) and load videos in parallel
     useEffect(() => {
