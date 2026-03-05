@@ -26,6 +26,7 @@ def compose_video(
     segments: List[Dict],
     output_path: str,
     progress_callback: Callable[[int, str], None] = None,
+    show_subtitles: bool = True,
 ) -> str:
     """
     Compose all segments into a final reel video using FFmpeg.
@@ -60,6 +61,7 @@ def compose_video(
             text=seg["text"],
             audio_duration=seg["audio_duration"],
             output_path=str(seg_path),
+            show_subtitles=show_subtitles,
         )
         segment_files.append(str(seg_path))
 
@@ -106,6 +108,7 @@ def _compose_segment(
     text: str,
     audio_duration: float,
     output_path: str,
+    show_subtitles: bool,
 ) -> None:
     """
     Compose a single segment:
@@ -114,40 +117,45 @@ def _compose_segment(
     3. Overlay subtitle text at bottom
     4. Mix with TTS audio
     """
-    # Clean text for FFmpeg drawtext filter (escape special chars)
-    safe_text = _escape_ffmpeg_text(text)
-
-    # If text is too long, truncate for subtitle display
-    if len(text) > 120:
-        words = text.split()
-        safe_text = _escape_ffmpeg_text(' '.join(words[:20]) + '...')
-
     # FFmpeg filter chain:
-    # 1. Scale and crop to 9:16 (center crop)
-    # 2. Loop video if shorter than audio
-    # 3. Add subtitle text
-    # 4. Mix with TTS audio, trim to audio duration
-    filter_complex = (
-        f"[0:v]"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-        f"fps={FPS}"
-        f"[scaled];"
-        f"[scaled]"
-        f"drawtext="
-        f"text='{safe_text}':"
-        f"fontcolor=white:"
-        f"fontsize={SUBTITLE_FONT_SIZE}:"
-        f"box=1:"
-        f"boxcolor=black@0.55:"
-        f"boxborderw=12:"
-        f"x=(w-text_w)/2:"
-        f"y=h-text_h-120:"
-        f"line_spacing=8:"
-        f"font=Sans:"
-        f"fix_bounds=true"
-        f"[out]"
-    )
+    # 1. Scale and pad to 9:16 (preserve full content from any orientation)
+    # 2. Add subtitle text only if show_subtitles=True
+    if show_subtitles:
+        safe_text = _escape_ffmpeg_text(text)
+
+        if len(text) > 120:
+            words = text.split()
+            safe_text = _escape_ffmpeg_text(' '.join(words[:20]) + '...')
+
+        filter_complex = (
+            f"[0:v]"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
+            f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"fps={FPS}"
+            f"[scaled];"
+            f"[scaled]"
+            f"drawtext="
+            f"text='{safe_text}':"
+            f"fontcolor=white:"
+            f"fontsize={SUBTITLE_FONT_SIZE}:"
+            f"box=1:"
+            f"boxcolor=black@0.55:"
+            f"boxborderw=12:"
+            f"x=(w-text_w)/2:"
+            f"y=h-text_h-120:"
+            f"line_spacing=8:"
+            f"font=Sans:"
+            f"fix_bounds=true"
+            f"[out]"
+        )
+    else:
+        filter_complex = (
+            f"[0:v]"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
+            f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"fps={FPS}"
+            f"[out]"
+        )
 
     cmd = [
         "ffmpeg", "-y",

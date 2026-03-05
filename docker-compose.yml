@@ -7,6 +7,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./backend/cache:/app/cache
+      - ./.env:/app/.env
     env_file:
       - .env
     restart: unless-stopped

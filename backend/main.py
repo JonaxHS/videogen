@@ -25,12 +25,18 @@ ENV_FILE = Path("/app/.env") if Path("/app/.env").exists() else Path(".env")
 load_dotenv(dotenv_path=ENV_FILE, override=True)
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
 
-OUTPUT_DIR = Path("output")
-CACHE_DIR = Path("backend/cache")
-TEMP_DIR = Path("backend/cache/temp")
+OUTPUT_DIR = Path("/app/output")
+CACHE_DIR = Path("/app/cache")
+TEMP_DIR = Path("/app/cache/temp")
 
 for d in [OUTPUT_DIR, CACHE_DIR, TEMP_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -39,8 +45,8 @@ app = FastAPI(title="VideoGen API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS or ["http://localhost:5173"],
+    allow_credentials="*" not in CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,7 +74,8 @@ class GenerateResponse(BaseModel):
 
 
 class SetupRequest(BaseModel):
-    pexels_api_key: str
+    pexels_api_key: str = ""
+    pixabay_api_key: str = ""
     elevenlabs_api_key: str
     deepgram_api_key: str
 
@@ -87,8 +94,9 @@ class VoicePreviewRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "configured": bool(PEXELS_API_KEY and (ELEVENLABS_API_KEY or DEEPGRAM_API_KEY)),
+        "configured": bool(PEXELS_API_KEY or PIXABAY_API_KEY),
         "pexels_configured": bool(PEXELS_API_KEY),
+        "pixabay_configured": bool(PIXABAY_API_KEY),
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
         "deepgram_configured": bool(DEEPGRAM_API_KEY),
     }
@@ -98,8 +106,9 @@ def health():
 def get_config():
     """Return current configuration (keys are masked for security)."""
     return {
-        "configured": bool(PEXELS_API_KEY and (ELEVENLABS_API_KEY or DEEPGRAM_API_KEY)),
+        "configured": bool(PEXELS_API_KEY or PIXABAY_API_KEY),
         "pexels_key_preview": f"...{PEXELS_API_KEY[-4:]}" if PEXELS_API_KEY else "",
+        "pixabay_key_preview": f"...{PIXABAY_API_KEY[-4:]}" if PIXABAY_API_KEY else "",
         "elevenlabs_key_preview": f"...{ELEVENLABS_API_KEY[-4:]}" if ELEVENLABS_API_KEY else "",
         "deepgram_key_preview": f"...{DEEPGRAM_API_KEY[-4:]}" if DEEPGRAM_API_KEY else ""
     }
@@ -108,26 +117,31 @@ def get_config():
 @app.post("/api/setup")
 def setup(req: SetupRequest):
     """Save configuration to .env file and reload env vars."""
-    global PEXELS_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY
+    global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY
 
     pexels_key = req.pexels_api_key.strip()
+    pixabay_key = req.pixabay_api_key.strip()
     elevenlabs_key = req.elevenlabs_api_key.strip()
     deepgram_key = req.deepgram_api_key.strip()
 
-    if not pexels_key:
-        raise HTTPException(status_code=400, detail="La API key de Pexels no puede estar vacía")
+    if not pexels_key and not pixabay_key:
+        raise HTTPException(status_code=400, detail="Debes configurar al menos una API key de videos (Pexels o Pixabay)")
     
     if not elevenlabs_key and not deepgram_key:
         # At least one premium TTS or Pexels for fallback is good, but let's just make Pexels strict
         pass
 
-    # Validate keys look reasonable
-    if len(pexels_key) < 20:
+    # Validate keys look reasonable (simple sanity check)
+    if pexels_key and len(pexels_key) < 20:
         raise HTTPException(status_code=400, detail="La API key de Pexels parece inválida (muy corta)")
+
+    if pixabay_key and len(pixabay_key) < 12:
+        raise HTTPException(status_code=400, detail="La API key de Pixabay parece inválida (muy corta)")
 
     # Write to .env file
     _write_env({
         "PEXELS_API_KEY": pexels_key, 
+        "PIXABAY_API_KEY": pixabay_key,
         "ELEVENLABS_API_KEY": elevenlabs_key,
         "DEEPGRAM_API_KEY": deepgram_key
     })
@@ -135,6 +149,7 @@ def setup(req: SetupRequest):
     # Reload in-process
     load_dotenv(dotenv_path=ENV_FILE, override=True)
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+    PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
@@ -182,8 +197,8 @@ def preview_voice(req: VoicePreviewRequest):
 
 @app.post("/api/generate", response_model=GenerateResponse)
 def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
-    if not PEXELS_API_KEY:
-        raise HTTPException(status_code=500, detail="PEXELS_API_KEY not configured")
+    if not PEXELS_API_KEY and not PIXABAY_API_KEY:
+        raise HTTPException(status_code=500, detail="No video provider configured: set PEXELS_API_KEY or PIXABAY_API_KEY")
 
     if not req.script.strip():
         raise HTTPException(status_code=400, detail="Script cannot be empty")
@@ -211,6 +226,7 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         voice=req.voice,
         rate=req.rate,
         pitch=req.pitch,
+        show_subtitles=req.show_subtitles,
     )
 
     return GenerateResponse(
@@ -276,7 +292,7 @@ def download(job_id: str):
 # Generation Worker
 # ─────────────────────────────────────────────
 
-def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str):
+def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool):
     """Background task: TTS + video search + composition."""
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
@@ -312,6 +328,8 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 keywords=seg["keywords"],
                 output_path=str(job_dir / f"video_{i:03d}.mp4"),
                 pexels_api_key=PEXELS_API_KEY,
+                pixabay_api_key=PIXABAY_API_KEY,
+                context_text=seg["text"],
                 min_duration=max(3, int(audio_duration)),
             )
 
@@ -332,7 +350,12 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             job["progress"] = pct
             job["message"] = msg
 
-        compose_video(composed_segments, output_path, progress_callback=progress_cb)
+        compose_video(
+            composed_segments,
+            output_path,
+            progress_callback=progress_cb,
+            show_subtitles=show_subtitles,
+        )
 
         job["status"] = "done"
         job["progress"] = 100

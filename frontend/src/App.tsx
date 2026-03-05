@@ -32,6 +32,7 @@ interface Job {
 interface Config {
     configured: boolean
     pexels_key_preview: string
+    pixabay_key_preview: string
     elevenlabs_key_preview: string
     deepgram_key_preview: string
 }
@@ -64,6 +65,7 @@ async function apiGet<T>(path: string): Promise<T> {
 function SetupWizard({ onComplete }: { onComplete: () => void }) {
     const [step, setStep] = useState(1)
     const [pexelsKey, setPexelsKey] = useState('')
+    const [pixabayKey, setPixabayKey] = useState('')
     const [elevenlabsKey, setElevenlabsKey] = useState('')
     const [deepgramKey, setDeepgramKey] = useState('')
     const [loading, setLoading] = useState(false)
@@ -76,6 +78,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
         try {
             await apiPost('/setup', {
                 pexels_api_key: pexelsKey,
+                pixabay_api_key: pixabayKey,
                 elevenlabs_api_key: elevenlabsKey,
                 deepgram_api_key: deepgramKey
             })
@@ -137,6 +140,28 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
 
                         <div className="wizard-field" style={{ marginTop: '12px' }}>
                             <label className="wizard-label">
+                                🎞️ Pixabay API Key (Opcional)
+                            </label>
+                            <p className="wizard-hint">
+                                Regístrate gratis en{' '}
+                                <a href="https://pixabay.com/api/docs/" target="_blank" rel="noreferrer" className="wizard-link">
+                                    pixabay.com/api/docs
+                                </a>{' '}
+                                y copia tu API key aquí.
+                            </p>
+                            <input
+                                id="pixabay-key-input"
+                                type="text"
+                                className="wizard-input"
+                                placeholder="Pega tu Pixabay API Key..."
+                                value={pixabayKey}
+                                onChange={e => setPixabayKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+
+                        <div className="wizard-field" style={{ marginTop: '12px' }}>
+                            <label className="wizard-label">
                                 🎙️ ElevenLabs API Key
                             </label>
                             <p className="wizard-hint">
@@ -187,8 +212,8 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                             id="btn-save-config"
                             className="wizard-btn"
                             onClick={handleSave}
-                            // Deshabilitamos si no hay Pexels o si están vacías ambas TTS
-                            disabled={!pexelsKey.trim() || (!elevenlabsKey.trim() && !deepgramKey.trim()) || loading || success}
+                            // Requerimos al menos una API de videos: Pexels o Pixabay
+                            disabled={(!pexelsKey.trim() && !pixabayKey.trim()) || loading || success}
                         >
                             {loading ? '⏳ Guardando...' : success ? '✅ ¡Listo!' : 'Guardar y continuar →'}
                         </button>
@@ -196,7 +221,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                 )}
 
                 <p className="wizard-footer">
-                    VideoGen requiere Pexels para videos y al menos una (ElevenLabs o Deepgram) para voz hiperrealista.
+                    VideoGen requiere al menos una API de videos (Pexels o Pixabay). ElevenLabs y Deepgram son opcionales para voces premium.
                 </p>
             </div>
         </div>
@@ -252,7 +277,7 @@ export default function App() {
     useEffect(() => {
         apiGet<Config>('/config')
             .then(c => setConfig(c))
-            .catch(() => setConfig({ configured: false, pexels_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' }))
+            .catch(() => setConfig({ configured: false, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' }))
             .finally(() => setCheckingConfig(false))
     }, [])
 
@@ -390,7 +415,7 @@ export default function App() {
         <div className="app">
             {/* Setup Wizard overlay if not configured */}
             {config && !config.configured && (
-                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })} />
+                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })} />
             )}
 
             {/* ── Header ─────────────────────────────────────────────── */}
@@ -412,7 +437,7 @@ export default function App() {
                             ⚙️ Config
                         </button>
                     )}
-                    <span className="badge">🎙 ElevenLabs HQ · 🎞 Pexels</span>
+                    <span className="badge">🎙 ElevenLabs HQ · 🎞 Pexels/Pixabay</span>
                 </div>
             </header>
 
