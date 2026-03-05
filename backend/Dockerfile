@@ -9,12 +9,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Fix: openai-whisper build needs pkg_resources (setuptools)
-RUN pip install --no-cache-dir --upgrade pip setuptools
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 WORKDIR /app
 
+
 COPY requirements.txt .
-COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
