@@ -16,6 +16,9 @@ WORKDIR /app
 
 
 COPY requirements.txt .
+# openai-whisper uses legacy setup.py that needs pkg_resources;
+# --no-build-isolation makes it use the already-installed setuptools
+RUN pip install --no-cache-dir --no-build-isolation openai-whisper==20231117
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .

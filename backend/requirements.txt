@@ -8,5 +8,4 @@ edge-tts==6.1.12
 gTTS==2.5.1
 aiofiles==23.2.1
 aiohttp==3.9.5
-openai-whisper==20231117
 numpy<2.0.0
