@@ -57,8 +57,36 @@ def parse_script(script: str) -> List[Dict]:
     # Normalize line endings
     script = script.replace('\r\n', '\n').replace('\r', '\n')
 
-    # Split by one or more blank lines
+    # Split by one or more blank lines (preferred)
     raw_segments = re.split(r'\n{2,}', script.strip())
+
+    # Fallback: if user wrote everything in one block, split by sentences
+    non_empty = [s for s in raw_segments if s.strip()]
+    if len(non_empty) <= 1:
+        sentence_parts = re.split(r'(?<=[.!?¿¡])\s+', script.strip())
+        sentence_parts = [s.strip() for s in sentence_parts if s.strip()]
+
+        grouped_segments = []
+        current_group = []
+        current_words = 0
+
+        for sentence in sentence_parts:
+            sentence_words = len(sentence.split())
+
+            # Start a new segment around ~28 words to keep reel pacing
+            if current_group and (current_words + sentence_words > 28):
+                grouped_segments.append(" ".join(current_group).strip())
+                current_group = [sentence]
+                current_words = sentence_words
+            else:
+                current_group.append(sentence)
+                current_words += sentence_words
+
+        if current_group:
+            grouped_segments.append(" ".join(current_group).strip())
+
+        if grouped_segments:
+            raw_segments = grouped_segments
 
     segments = []
     for i, text in enumerate(raw_segments):

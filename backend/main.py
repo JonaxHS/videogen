@@ -304,6 +304,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         job["status"] = "running"
         total = len(segments)
         composed_segments = []
+        used_video_urls: set[str] = set()
 
         for i, seg in enumerate(segments):
             # Update progress
@@ -333,7 +334,12 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 pixabay_api_key=PIXABAY_API_KEY,
                 context_text=seg["text"],
                 min_duration=max(3, int(audio_duration)),
+                exclude_urls=used_video_urls,
             )
+
+            # Track selected clip to avoid repetition in next segments
+            used_video_urls.add(Path(video_path).name)
+            used_video_urls.add(Path(video_path).stem)
 
             composed_segments.append({
                 **seg,

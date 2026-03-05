@@ -17,6 +17,48 @@ STOP_WORDS = {
     "muy", "ya", "pero", "si", "no", "the", "and", "or", "for", "with", "this", "that", "from",
 }
 
+TERM_MAP = {
+    "estrella": "star",
+    "galaxia": "galaxy",
+    "universo": "universe",
+    "planeta": "planet",
+    "espacio": "space",
+    "átomo": "atom",
+    "atomo": "atom",
+    "energía": "energy",
+    "energia": "energy",
+    "tiempo": "time",
+    "ciencia": "science",
+    "tecnología": "technology",
+    "tecnologia": "technology",
+    "naturaleza": "nature",
+    "océano": "ocean",
+    "oceano": "ocean",
+    "bosque": "forest",
+    "ciudad": "city",
+    "futuro": "future",
+    "historia": "history",
+    "humano": "human",
+    "humanidad": "humanity",
+    "guerra": "war",
+    "paz": "peace",
+    "economía": "economy",
+    "economia": "economy",
+    "dinero": "money",
+    "salud": "health",
+    "médico": "medical",
+    "medico": "medical",
+    "comida": "food",
+    "viaje": "travel",
+    "trabajo": "work",
+    "educación": "education",
+    "educacion": "education",
+    "inteligencia": "intelligence",
+    "artificial": "artificial",
+    "robot": "robot",
+    "digital": "digital",
+}
+
 
 def search_and_download_video(
     keywords: str,
@@ -26,6 +68,7 @@ def search_and_download_video(
     context_text: str = "",
     min_duration: int = 5,
     fallback_keywords: str = "nature landscape",
+    exclude_urls: set[str] | None = None,
 ) -> str:
     """
     Search Pexels/Pixabay for a video matching keywords and download it.
@@ -46,19 +89,29 @@ def search_and_download_video(
     video_url = None
     provider_name = None
     best_score = float("-inf")
+    exclude_urls = exclude_urls or set()
     query_candidates = _build_query_candidates(keywords, context_text, fallback_keywords)
 
     for query in query_candidates:
         for candidate_provider, candidate_key in providers:
             if candidate_provider == "pexels":
-                candidate = _search_pexels(query, candidate_key, min_duration)
+                candidate = _search_pexels(query, candidate_key, min_duration, exclude_urls=exclude_urls)
             else:
-                candidate = _search_pixabay(query, candidate_key, min_duration)
+                candidate = _search_pixabay(query, candidate_key, min_duration, exclude_urls=exclude_urls)
 
-            if candidate and candidate["score"] > best_score:
-                best_score = candidate["score"]
-                video_url = candidate["url"]
-                provider_name = candidate_provider
+            if candidate:
+                candidate_cache_hash = hashlib.md5(f"{candidate_provider}:{candidate['url']}".encode()).hexdigest()
+                if (
+                    candidate["url"] in exclude_urls
+                    or candidate_cache_hash in exclude_urls
+                    or f"{candidate_cache_hash}.mp4" in exclude_urls
+                ):
+                    continue
+
+                if candidate["score"] > best_score:
+                    best_score = candidate["score"]
+                    video_url = candidate["url"]
+                    provider_name = candidate_provider
 
     if not video_url or not provider_name:
         raise RuntimeError(f"No video found for keywords: '{keywords}'")
@@ -87,6 +140,7 @@ def _search_pexels(
     api_key: str,
     min_duration: int,
     per_page: int = 20,
+    exclude_urls: set[str] | None = None,
 ) -> dict | None:
     """
     Search Pexels API and return best candidate with score + URL.
@@ -117,6 +171,7 @@ def _search_pexels(
         return None
 
     query_terms = _extract_terms(query)
+    exclude_urls = exclude_urls or set()
     best = None
 
     for video in videos:
@@ -134,11 +189,14 @@ def _search_pexels(
         link = selected.get("link")
         if not link:
             continue
+        if link in exclude_urls:
+            continue
 
         metadata_text = " ".join([
             str(video.get("url", "")),
             str((video.get("user") or {}).get("name", "")),
             str(video.get("id", "")),
+            query,
         ])
 
         relevance = _text_relevance_score(query_terms, metadata_text)
@@ -157,6 +215,7 @@ def _search_pixabay(
     api_key: str,
     min_duration: int,
     per_page: int = 25,
+    exclude_urls: set[str] | None = None,
 ) -> dict | None:
     """
     Search Pixabay videos API and return best candidate with score + URL.
@@ -181,6 +240,7 @@ def _search_pixabay(
         return None
 
     query_terms = _extract_terms(query)
+    exclude_urls = exclude_urls or set()
     best = None
 
     for hit in hits:
@@ -200,11 +260,17 @@ def _search_pixabay(
             reverse=True,
         )
         selected = variants[0]
+        selected_url = selected.get("url")
+        if not selected_url:
+            continue
+        if selected_url in exclude_urls:
+            continue
 
         metadata_text = " ".join([
             str(hit.get("tags", "")),
             str(hit.get("user", "")),
             str(hit.get("type", "")),
+            query,
         ])
         relevance = _text_relevance_score(query_terms, metadata_text)
         duration_score = max(0.0, 25.0 - abs(duration - min_duration) * 2.0)
@@ -212,7 +278,7 @@ def _search_pixabay(
         total_score = relevance * 12.0 + duration_score + resolution_score
 
         if best is None or total_score > best["score"]:
-            best = {"url": selected.get("url"), "score": total_score}
+            best = {"url": selected_url, "score": total_score}
 
     return best
 
@@ -220,6 +286,7 @@ def _search_pixabay(
 def _build_query_candidates(keywords: str, context_text: str, fallback_keywords: str) -> list[str]:
     keyword_terms = _extract_terms(keywords)
     context_terms = _extract_terms(context_text)
+    translated_terms = _translate_terms(keyword_terms + context_terms)
 
     all_terms = []
     for term in keyword_terms + context_terms:
@@ -229,10 +296,15 @@ def _build_query_candidates(keywords: str, context_text: str, fallback_keywords:
     candidates = []
     if keyword_terms:
         candidates.append(" ".join(keyword_terms[:3]))
+    if translated_terms:
+        candidates.append(" ".join(translated_terms[:3]))
     if all_terms:
         candidates.append(" ".join(all_terms[:2]))
         candidates.append(" ".join(all_terms[:3]))
         candidates.append(" ".join(all_terms[:4]))
+    if translated_terms:
+        candidates.append(" ".join(translated_terms[:2]))
+        candidates.append(" ".join(translated_terms[:4]))
     if fallback_keywords:
         candidates.append(fallback_keywords)
 
@@ -246,6 +318,15 @@ def _build_query_candidates(keywords: str, context_text: str, fallback_keywords:
         unique.append(c)
 
     return unique or [fallback_keywords]
+
+
+def _translate_terms(terms: list[str]) -> list[str]:
+    translated = []
+    for term in terms:
+        mapped = TERM_MAP.get(term.lower())
+        if mapped and mapped not in translated:
+            translated.append(mapped)
+    return translated
 
 
 def _extract_terms(text: str, max_terms: int = 12) -> list[str]:
