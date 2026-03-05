@@ -15,6 +15,11 @@ interface Voice {
     name: string
 }
 
+interface VoicesResponse {
+    elevenlabs: Voice[]
+    free: Voice[]
+}
+
 interface Job {
     status: 'queued' | 'running' | 'done' | 'error'
     progress: number
@@ -26,6 +31,7 @@ interface Job {
 interface Config {
     configured: boolean
     pexels_key_preview: string
+    elevenlabs_key_preview: string
 }
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
@@ -56,6 +62,7 @@ async function apiGet<T>(path: string): Promise<T> {
 function SetupWizard({ onComplete }: { onComplete: () => void }) {
     const [step, setStep] = useState(1)
     const [pexelsKey, setPexelsKey] = useState('')
+    const [elevenlabsKey, setElevenlabsKey] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
@@ -64,7 +71,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
         setError(null)
         setLoading(true)
         try {
-            await apiPost('/setup', { pexels_api_key: pexelsKey })
+            await apiPost('/setup', { pexels_api_key: pexelsKey, elevenlabs_api_key: elevenlabsKey })
             setSuccess(true)
             setTimeout(onComplete, 1800)
         } catch (e: unknown) {
@@ -121,6 +128,28 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                             />
                         </div>
 
+                        <div className="wizard-field" style={{ marginTop: '12px' }}>
+                            <label className="wizard-label">
+                                🎙️ ElevenLabs API Key
+                            </label>
+                            <p className="wizard-hint">
+                                Regístrate gratis en{' '}
+                                <a href="https://elevenlabs.io/" target="_blank" rel="noreferrer" className="wizard-link">
+                                    elevenlabs.io
+                                </a>{' '}
+                                y copia tu API key aquí.
+                            </p>
+                            <input
+                                id="elevenlabs-key-input"
+                                type="text"
+                                className="wizard-input"
+                                placeholder="Pega tu ElevenLabs API Key..."
+                                value={elevenlabsKey}
+                                onChange={e => setElevenlabsKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+
                         {error && <div className="wizard-error">❌ {error}</div>}
 
                         {success && (
@@ -131,7 +160,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                             id="btn-save-config"
                             className="wizard-btn"
                             onClick={handleSave}
-                            disabled={!pexelsKey.trim() || loading || success}
+                            disabled={!pexelsKey.trim() || !elevenlabsKey.trim() || loading || success}
                         >
                             {loading ? '⏳ Guardando...' : success ? '✅ ¡Listo!' : 'Guardar y continuar →'}
                         </button>
@@ -139,7 +168,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                 )}
 
                 <p className="wizard-footer">
-                    edge-tts no requiere API key · Solo Pexels es necesaria
+                    VideoGen requiere Pexels para videos y ElevenLabs para voz hiperrealista.
                 </p>
             </div>
         </div>
@@ -180,8 +209,8 @@ export default function App() {
     const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
     const [segments, setSegments] = useState<Segment[]>([])
-    const [voices, setVoices] = useState<Voice[]>([])
-    const [selectedVoice, setSelectedVoice] = useState('es-MX-DaliaNeural')
+    const [voices, setVoices] = useState<VoicesResponse>({ elevenlabs: [], free: [] })
+    const [selectedVoice, setSelectedVoice] = useState('ErXwobaYiN019PkySvjV')
     const [showSubtitles, setShowSubtitles] = useState(true)
     const [rate, setRate] = useState('+0%')
     const [jobId, setJobId] = useState<string | null>(null)
@@ -195,16 +224,22 @@ export default function App() {
     useEffect(() => {
         apiGet<Config>('/config')
             .then(c => setConfig(c))
-            .catch(() => setConfig({ configured: false, pexels_key_preview: '' }))
+            .catch(() => setConfig({ configured: false, pexels_key_preview: '', elevenlabs_key_preview: '' }))
             .finally(() => setCheckingConfig(false))
     }, [])
 
     // Load voices on mount
     useEffect(() => {
-        apiGet<{ voices: Voice[] }>('/voices')
-            .then(d => setVoices(d.voices))
+        apiGet<VoicesResponse>('/voices')
+            .then(d => {
+                setVoices(d)
+                // If they don't have ElevenLabs configured, try to pick a free voice to avoid 401 errors by default
+                if (config && !config.elevenlabs_key_preview && d.free.length > 0) {
+                    setSelectedVoice(d.free[0].id)
+                }
+            })
             .catch(() => { })
-    }, [])
+    }, [config])
 
     // Auto-preview segments as user types (debounced)
     useEffect(() => {
@@ -327,7 +362,7 @@ export default function App() {
         <div className="app">
             {/* Setup Wizard overlay if not configured */}
             {config && !config.configured && (
-                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '' })} />
+                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '', elevenlabs_key_preview: '' })} />
             )}
 
             {/* ── Header ─────────────────────────────────────────────── */}
@@ -349,7 +384,7 @@ export default function App() {
                             ⚙️ Config
                         </button>
                     )}
-                    <span className="badge">🎙 edge-tts · 🎞 Pexels</span>
+                    <span className="badge">🎙 ElevenLabs HQ · 🎞 Pexels</span>
                 </div>
             </header>
 
@@ -406,9 +441,12 @@ export default function App() {
                                     onChange={e => setSelectedVoice(e.target.value)}
                                     disabled={!!isRunning}
                                 >
-                                    {voices.length > 0
-                                        ? voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)
-                                        : <option value="es-MX-DaliaNeural">Dalia (Mujer · México)</option>}
+                                    <optgroup label="Voces ElevenLabs (Premium ✦)">
+                                        {voices.elevenlabs.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                    </optgroup>
+                                    <optgroup label="Voces Gratuitas (Microsoft / Google)">
+                                        {voices.free.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                    </optgroup>
                                 </select>
                                 <button
                                     className="btn-secondary"

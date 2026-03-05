@@ -25,10 +25,14 @@ ENV_FILE = Path("/app/.env") if Path("/app/.env").exists() else Path(".env")
 load_dotenv(dotenv_path=ENV_FILE, override=True)
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
-OUTPUT_DIR = Path("/app/output")
-TEMP_DIR = Path("/app/cache/jobs")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+
+OUTPUT_DIR = Path("output")
+CACHE_DIR = Path("backend/cache")
+TEMP_DIR = Path("backend/cache/temp")
+
+for d in [OUTPUT_DIR, CACHE_DIR, TEMP_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VideoGen API", version="1.0.0")
 
@@ -64,6 +68,7 @@ class GenerateResponse(BaseModel):
 
 class SetupRequest(BaseModel):
     pexels_api_key: str
+    elevenlabs_api_key: str
 
 class VoicePreviewRequest(BaseModel):
     text: str
@@ -80,41 +85,48 @@ class VoicePreviewRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "configured": bool(PEXELS_API_KEY),
+        "configured": bool(PEXELS_API_KEY and ELEVENLABS_API_KEY),
         "pexels_configured": bool(PEXELS_API_KEY),
+        "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
     }
 
 
 @app.get("/api/config")
 def get_config():
     """Return current configuration (keys are masked for security)."""
-    key = PEXELS_API_KEY
-    masked = (key[:6] + "*" * (len(key) - 6)) if len(key) > 6 else ("*" * len(key))
     return {
-        "configured": bool(key),
-        "pexels_key_preview": masked if key else "",
+        "configured": bool(PEXELS_API_KEY and ELEVENLABS_API_KEY),
+        "pexels_key_preview": f"...{PEXELS_API_KEY[-4:]}" if PEXELS_API_KEY else "",
+        "elevenlabs_key_preview": f"...{ELEVENLABS_API_KEY[-4:]}" if ELEVENLABS_API_KEY else ""
     }
 
 
 @app.post("/api/setup")
 def setup(req: SetupRequest):
     """Save configuration to .env file and reload env vars."""
-    global PEXELS_API_KEY
+    global PEXELS_API_KEY, ELEVENLABS_API_KEY
 
-    key = req.pexels_api_key.strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="La API key no puede estar vacía")
+    pexels_key = req.pexels_api_key.strip()
+    elevenlabs_key = req.elevenlabs_api_key.strip()
 
-    # Validate key looks reasonable (Pexels keys are alphanumeric)
-    if len(key) < 20:
-        raise HTTPException(status_code=400, detail="La API key parece inválida (muy corta)")
+    if not pexels_key:
+        raise HTTPException(status_code=400, detail="La API key de Pexels no puede estar vacía")
+    if not elevenlabs_key:
+        raise HTTPException(status_code=400, detail="La API key de ElevenLabs no puede estar vacía")
+
+    # Validate keys look reasonable
+    if len(pexels_key) < 20:
+        raise HTTPException(status_code=400, detail="La API key de Pexels parece inválida (muy corta)")
+    if len(elevenlabs_key) < 20: # ElevenLabs keys are typically longer
+        raise HTTPException(status_code=400, detail="La API key de ElevenLabs parece inválida (muy corta)")
 
     # Write to .env file
-    _write_env({"PEXELS_API_KEY": key})
+    _write_env({"PEXELS_API_KEY": pexels_key, "ELEVENLABS_API_KEY": elevenlabs_key})
 
     # Reload in-process
     load_dotenv(dotenv_path=ENV_FILE, override=True)
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
     return {"success": True, "message": "Configuración guardada correctamente"}
 
@@ -132,7 +144,7 @@ def _write_env(updates: dict):
 
 @app.get("/api/voices")
 def voices():
-    return {"voices": get_available_voices()}
+    return get_available_voices()
 
 
 @app.post("/api/preview-voice")
