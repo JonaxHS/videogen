@@ -265,6 +265,7 @@ function SegmentCard({ seg, index }: { seg: Segment; index: number }) {
 
 export default function App() {
     const [config, setConfig] = useState<Config | null>(null)
+    const [showSetupWizard, setShowSetupWizard] = useState(false)
     const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
     const [segments, setSegments] = useState<Segment[]>([])
@@ -282,8 +283,14 @@ export default function App() {
     // Check config on mount
     useEffect(() => {
         apiGet<Config>('/config')
-            .then(c => setConfig(c))
-            .catch(() => setConfig({ configured: false, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' }))
+            .then(c => {
+                setConfig(c)
+                setShowSetupWizard(!c.configured)
+            })
+            .catch(() => {
+                setConfig({ configured: false, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })
+                setShowSetupWizard(true)
+            })
             .finally(() => setCheckingConfig(false))
     }, [])
 
@@ -420,15 +427,16 @@ export default function App() {
     return (
         <div className="app">
             {/* Setup Wizard overlay if not configured */}
-            {config && !config.configured && (
+            {config && showSetupWizard && (
                 <SetupWizard 
                     onComplete={async () => {
                         // Reload config from backend after saving
                         try {
                             const newConfig = await apiGet<Config>('/config')
                             setConfig(newConfig)
+                            setShowSetupWizard(!newConfig.configured)
                         } catch {
-                            setConfig({ configured: true, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })
+                            setShowSetupWizard(true)
                         }
                     }}
                     existingConfig={config}
@@ -448,7 +456,15 @@ export default function App() {
                         <button
                             className="badge"
                             style={{ cursor: 'pointer', border: '1px solid var(--border)' }}
-                            onClick={() => setConfig(c => c ? { ...c, configured: false } : c)}
+                            onClick={async () => {
+                                try {
+                                    const latest = await apiGet<Config>('/config')
+                                    setConfig(latest)
+                                } catch {
+                                    // keep current config if refresh fails
+                                }
+                                setShowSetupWizard(true)
+                            }}
                             title="Cambiar API keys"
                         >
                             ⚙️ Config
