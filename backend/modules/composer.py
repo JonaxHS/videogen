@@ -184,12 +184,15 @@ def _compose_segment(
 
 def _escape_ffmpeg_text(text: str) -> str:
     """Escape text for FFmpeg drawtext filter."""
-    # Replace special chars that break drawtext
-    text = text.replace("'", "\u2019")   # smart apostrophe
-    text = text.replace('"', '\\"')
-    text = text.replace(':', '\\:')
+    # Order matters: escape backslash first, then other special chars
+    text = text.replace('\\', '\\\\')    # Must be first
+    text = text.replace("'", "'\\''")    # Escape single quotes for shell
+    text = text.replace(':', '\\:')      # FFmpeg drawtext uses : as separator
     text = text.replace('%', '\\%')
-    text = text.replace('\\', '\\\\')
+    text = text.replace('[', '\\[')
+    text = text.replace(']', '\\]')
+    # Remove markdown formatting that causes issues
+    text = text.replace('**', '')        # Remove bold markers
     text = re.sub(r'\s+', ' ', text).strip()
     # Word wrap: insert newline every ~40 chars at word boundary
     return _word_wrap(text, 40)
