@@ -43,6 +43,7 @@ interface Config {
     pixabay_key_preview: string
     elevenlabs_key_preview: string
     deepgram_key_preview: string
+    telegram_bot_token_preview: string
 }
 
 interface ParseResponse {
@@ -329,6 +330,7 @@ function SetupWizard({ onComplete, existingConfig }: { onComplete: () => void, e
     const [pixabayKey, setPixabayKey] = useState('')
     const [elevenlabsKey, setElevenlabsKey] = useState('')
     const [deepgramKey, setDeepgramKey] = useState('')
+    const [telegramBotToken, setTelegramBotToken] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
@@ -338,6 +340,7 @@ function SetupWizard({ onComplete, existingConfig }: { onComplete: () => void, e
     const hasPixabay = !!existingConfig?.pixabay_key_preview
     const hasElevenlabs = !!existingConfig?.elevenlabs_key_preview
     const hasDeepgram = !!existingConfig?.deepgram_key_preview
+    const hasTelegramBot = !!existingConfig?.telegram_bot_token_preview
 
     const handleSave = async () => {
         setError(null)
@@ -347,7 +350,8 @@ function SetupWizard({ onComplete, existingConfig }: { onComplete: () => void, e
                 pexels_api_key: pexelsKey,
                 pixabay_api_key: pixabayKey,
                 elevenlabs_api_key: elevenlabsKey,
-                deepgram_api_key: deepgramKey
+                deepgram_api_key: deepgramKey,
+                telegram_bot_token: telegramBotToken,
             })
             setSuccess(true)
             setTimeout(onComplete, 1800)
@@ -465,6 +469,28 @@ function SetupWizard({ onComplete, existingConfig }: { onComplete: () => void, e
                                 placeholder={hasDeepgram ? `Ya configurada: ${existingConfig?.deepgram_key_preview || ''}` : "Pega tu Deepgram API Key..."}
                                 value={deepgramKey}
                                 onChange={e => setDeepgramKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+
+                        <div className="wizard-field" style={{ marginTop: '12px' }}>
+                            <label className="wizard-label">
+                                🤖 Telegram Bot Token (Opcional)
+                            </label>
+                            <p className="wizard-hint">
+                                Créalo con{' '}
+                                <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="wizard-link">
+                                    @BotFather
+                                </a>{' '}
+                                y pega el token aquí para activar generación desde Telegram.
+                            </p>
+                            <input
+                                id="telegram-bot-token-input"
+                                type="text"
+                                className="wizard-input"
+                                placeholder={hasTelegramBot ? `Ya configurado: ${existingConfig?.telegram_bot_token_preview || ''}` : "Pega tu Telegram Bot Token..."}
+                                value={telegramBotToken}
+                                onChange={e => setTelegramBotToken(e.target.value)}
                                 disabled={loading}
                             />
                         </div>
@@ -604,7 +630,7 @@ export default function App() {
                 setShowSetupWizard(!c.configured)
             })
             .catch(() => {
-                setConfig({ configured: false, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })
+                setConfig({ configured: false, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '', telegram_bot_token_preview: '' })
                 setShowSetupWizard(true)
             })
             .finally(() => setCheckingConfig(false))

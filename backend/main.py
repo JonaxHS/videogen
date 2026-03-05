@@ -28,6 +28,7 @@ PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
@@ -80,6 +81,7 @@ class SetupRequest(BaseModel):
     pixabay_api_key: str = ""
     elevenlabs_api_key: str
     deepgram_api_key: str
+    telegram_bot_token: str = ""
 
 class VoicePreviewRequest(BaseModel):
     text: str
@@ -113,6 +115,7 @@ def health():
         "pixabay_configured": bool(PIXABAY_API_KEY),
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
         "deepgram_configured": bool(DEEPGRAM_API_KEY),
+        "telegram_bot_configured": bool(TELEGRAM_BOT_TOKEN),
     }
 
 
@@ -124,31 +127,36 @@ def get_config():
         "pexels_key_preview": f"...{PEXELS_API_KEY[-4:]}" if PEXELS_API_KEY else "",
         "pixabay_key_preview": f"...{PIXABAY_API_KEY[-4:]}" if PIXABAY_API_KEY else "",
         "elevenlabs_key_preview": f"...{ELEVENLABS_API_KEY[-4:]}" if ELEVENLABS_API_KEY else "",
-        "deepgram_key_preview": f"...{DEEPGRAM_API_KEY[-4:]}" if DEEPGRAM_API_KEY else ""
+        "deepgram_key_preview": f"...{DEEPGRAM_API_KEY[-4:]}" if DEEPGRAM_API_KEY else "",
+        "telegram_bot_token_preview": f"...{TELEGRAM_BOT_TOKEN[-6:]}" if TELEGRAM_BOT_TOKEN else "",
     }
 
 
 @app.post("/api/setup")
 def setup(req: SetupRequest):
     """Save configuration to .env file and reload env vars."""
-    global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY
+    global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, TELEGRAM_BOT_TOKEN
 
     # Only update non-empty keys (preserve existing if user leaves blank)
     new_pexels = req.pexels_api_key.strip()
     new_pixabay = req.pixabay_api_key.strip()
     new_elevenlabs = req.elevenlabs_api_key.strip()
     new_deepgram = req.deepgram_api_key.strip()
+    new_telegram_bot_token = req.telegram_bot_token.strip()
 
     pexels_key = new_pexels if new_pexels else PEXELS_API_KEY
     pixabay_key = new_pixabay if new_pixabay else PIXABAY_API_KEY
     elevenlabs_key = new_elevenlabs if new_elevenlabs else ELEVENLABS_API_KEY
     deepgram_key = new_deepgram if new_deepgram else DEEPGRAM_API_KEY
+    telegram_bot_token = new_telegram_bot_token if new_telegram_bot_token else TELEGRAM_BOT_TOKEN
 
     # Validate NEW keys only (don't re-validate existing)
     if new_pexels and len(new_pexels) < 20:
         raise HTTPException(status_code=400, detail="La API key de Pexels parece inválida (muy corta)")
     if new_pixabay and len(new_pixabay) < 12:
         raise HTTPException(status_code=400, detail="La API key de Pixabay parece inválida (muy corta)")
+    if new_telegram_bot_token and ":" not in new_telegram_bot_token:
+        raise HTTPException(status_code=400, detail="El token del bot de Telegram parece inválido")
 
     # Require at least one video provider (existing or new)
     if not pexels_key and not pixabay_key:
@@ -159,7 +167,8 @@ def setup(req: SetupRequest):
         "PEXELS_API_KEY": pexels_key, 
         "PIXABAY_API_KEY": pixabay_key,
         "ELEVENLABS_API_KEY": elevenlabs_key,
-        "DEEPGRAM_API_KEY": deepgram_key
+        "DEEPGRAM_API_KEY": deepgram_key,
+        "TELEGRAM_BOT_TOKEN": telegram_bot_token,
     })
 
     # Reload in-process
@@ -168,6 +177,7 @@ def setup(req: SetupRequest):
     PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     return {"success": True, "message": "Configuración guardada correctamente"}
 
