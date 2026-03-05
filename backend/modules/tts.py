@@ -26,11 +26,20 @@ ELEVENLABS_VOICES = {
 # ─── Deepgram Voices (Aura 2 TTS - Spanish) ──────────────────────────────
 
 DEEPGRAM_VOICES = {
-    "aura-2-alvaro-es": "Alvaro (Hombre · Español - Peninsular)",
+    "aura-2-agustina-es": "Agustina (Mujer · Español - Peninsular)",
+    "aura-2-alvaro-es": "Álvaro (Hombre · Español - Peninsular)",
+    "aura-2-antonia-es": "Antonia (Mujer · Español - Argentina)",
+    "aura-2-aquila-es": "Aquila (Hombre · Español - LATAM)",
+    "aura-2-carina-es": "Carina (Mujer · Español - Peninsular)",
     "aura-2-celeste-es": "Celeste (Mujer · Español - Colombia)",
-    "aura-2-estrella-es": "Estrella (Mujer · Español - LATAM)",
-    "aura-2-javier-es": "Javier (Hombre · Español - Peninsular)",
+    "aura-2-diana-es": "Diana (Mujer · Español - Peninsular)",
+    "aura-2-estrella-es": "Estrella (Mujer · Español - México)",
+    "aura-2-gloria-es": "Gloria (Mujer · Español - Colombia)",
+    "aura-2-javier-es": "Javier (Hombre · Español - LATAM)",
+    "aura-2-luciano-es": "Luciano (Hombre · Español - México)",
     "aura-2-nestor-es": "Néstor (Hombre · Español - Peninsular)",
+    "aura-2-olivia-es": "Olivia (Mujer · Español - México)",
+    "aura-2-selena-es": "Selena (Mujer · Español - LATAM)",
     "aura-2-silvia-es": "Silvia (Mujer · Español - Peninsular)",
     "aura-2-sirio-es": "Sirio (Hombre · Español - México)",
     "aura-2-valerio-es": "Valerio (Hombre · Español - México)",
