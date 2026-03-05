@@ -16,8 +16,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 WORKDIR /app
 
 COPY requirements.txt .
-# Install openai-whisper first (legacy build, needs pinned setuptools above)
-RUN pip install --no-cache-dir openai-whisper==20231117
+# openai-whisper setup.py imports pkg_resources which is missing in setuptools>=70.
+# --no-build-isolation forces pip to use the system env (with setuptools==68.2.2)
+# instead of creating an isolated build env that re-installs the latest setuptools.
+RUN pip install --no-cache-dir --no-build-isolation openai-whisper==20231117
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
