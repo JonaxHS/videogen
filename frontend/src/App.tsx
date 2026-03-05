@@ -10,6 +10,14 @@ interface Segment {
     estimated_duration: number
 }
 
+interface VideoOption {
+    provider: string
+    url: string
+    thumbnail?: string
+    score: number
+    duration?: number
+}
+
 interface Voice {
     id: string
     name: string
@@ -35,6 +43,14 @@ interface Config {
     pixabay_key_preview: string
     elevenlabs_key_preview: string
     deepgram_key_preview: string
+}
+
+interface ParseResponse {
+    segments: Segment[]
+}
+
+interface VideoOptionsResponse {
+    options: VideoOption[]
 }
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
@@ -244,7 +260,25 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
     )
 }
 
-function SegmentCard({ seg, index }: { seg: Segment; index: number }) {
+function SegmentCard({
+    seg,
+    index,
+    selectedUrl,
+    options,
+    loading,
+    isOpen,
+    onReplace,
+    onPick,
+}: {
+    seg: Segment
+    index: number
+    selectedUrl?: string
+    options: VideoOption[]
+    loading: boolean
+    isOpen: boolean
+    onReplace: () => void
+    onPick: (url: string) => void
+}) {
     return (
         <div className="segment-card">
             <div className="segment-num">{index + 1}</div>
@@ -255,7 +289,49 @@ function SegmentCard({ seg, index }: { seg: Segment; index: number }) {
                         <span key={kw} className="tag tag-kw">#{kw}</span>
                     ))}
                     <span className="tag tag-dur">⏱ ~{seg.estimated_duration.toFixed(1)}s</span>
+                    {selectedUrl && <span className="tag tag-kw">✅ Manual</span>}
                 </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <button className="btn-secondary" onClick={onReplace} style={{ padding: '6px 10px', fontSize: 12 }}>
+                        🔁 Reemplazar video
+                    </button>
+                    {selectedUrl && (
+                        <button className="btn-secondary" onClick={() => onPick('')} style={{ padding: '6px 10px', fontSize: 12 }}>
+                            ♻️ Volver a automático
+                        </button>
+                    )}
+                </div>
+
+                {isOpen && (
+                    <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                        {loading && <div style={{ fontSize: 12, opacity: 0.8 }}>Buscando opciones...</div>}
+                        {!loading && options.length === 0 && <div style={{ fontSize: 12, opacity: 0.8 }}>No se encontraron más videos.</div>}
+                        {!loading && options.map((opt) => (
+                            <button
+                                key={opt.url}
+                                className="btn-secondary"
+                                onClick={() => onPick(opt.url)}
+                                style={{
+                                    padding: 8,
+                                    textAlign: 'left',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                }}
+                            >
+                                {opt.thumbnail ? (
+                                    <img src={opt.thumbnail} alt="thumb" style={{ width: 72, height: 40, objectFit: 'cover', borderRadius: 6 }} />
+                                ) : (
+                                    <div style={{ width: 72, height: 40, borderRadius: 6, background: 'rgba(255,255,255,0.08)' }} />
+                                )}
+                                <div style={{ display: 'grid', gap: 2 }}>
+                                    <span style={{ fontSize: 12 }}>Proveedor: {opt.provider}</span>
+                                    <span style={{ fontSize: 11, opacity: 0.75 }}>Duración: ~{opt.duration || seg.estimated_duration}s</span>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     )
@@ -269,6 +345,10 @@ export default function App() {
     const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
     const [segments, setSegments] = useState<Segment[]>([])
+    const [selectedVideos, setSelectedVideos] = useState<Record<number, string>>({})
+    const [videoOptionsBySeg, setVideoOptionsBySeg] = useState<Record<number, VideoOption[]>>({})
+    const [loadingOptionsBySeg, setLoadingOptionsBySeg] = useState<Record<number, boolean>>({})
+    const [openOptionsSegId, setOpenOptionsSegId] = useState<number | null>(null)
     const [voices, setVoices] = useState<VoicesResponse>({ elevenlabs: [], deepgram: [], free: [] })
     const [selectedVoice, setSelectedVoice] = useState('ErXwobaYiN019PkySvjV')
     const [showSubtitles, setShowSubtitles] = useState(true)
@@ -307,21 +387,63 @@ export default function App() {
             .catch(() => { })
     }, [config])
 
-    // Auto-preview segments as user types (debounced)
+    // Auto-preview segments as user types (debounced, canonical parse from backend)
     useEffect(() => {
-        if (!script.trim()) { setSegments([]); return }
-        const timer = setTimeout(() => {
-            const raw = script.split(/\n{2,}/).map((t, i) => ({
-                id: i,
-                text: t.trim(),
-                keywords: t.trim().split(/\s+/).slice(0, 3).join(' '),
-                word_count: t.trim().split(/\s+/).length,
-                estimated_duration: Math.max(3, (t.trim().split(/\s+/).length / 2.5)),
-            })).filter(s => s.text)
-            setSegments(raw)
-        }, 400)
+        if (!script.trim()) {
+            setSegments([])
+            setSelectedVideos({})
+            setVideoOptionsBySeg({})
+            setOpenOptionsSegId(null)
+            return
+        }
+        const timer = setTimeout(async () => {
+            try {
+                const parsed = await apiPost<ParseResponse>('/parse', { script })
+                setSegments(parsed.segments || [])
+                setSelectedVideos({})
+                setVideoOptionsBySeg({})
+                setOpenOptionsSegId(null)
+            } catch {
+                // keep previous segments on transient parse errors
+            }
+        }, 450)
         return () => clearTimeout(timer)
     }, [script])
+
+    const handleReplaceVideo = useCallback(async (seg: Segment) => {
+        setOpenOptionsSegId(seg.id)
+        setLoadingOptionsBySeg(prev => ({ ...prev, [seg.id]: true }))
+        try {
+            const exclude = [
+                ...Object.values(selectedVideos),
+                ...(videoOptionsBySeg[seg.id] || []).map(o => o.url),
+            ]
+            const res = await apiPost<VideoOptionsResponse>('/video-options', {
+                keywords: seg.keywords,
+                context_text: seg.text,
+                min_duration: Math.max(3, Math.round(seg.estimated_duration)),
+                limit: 8,
+                exclude_urls: exclude,
+            })
+            setVideoOptionsBySeg(prev => ({ ...prev, [seg.id]: res.options || [] }))
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : 'Error buscando videos')
+        } finally {
+            setLoadingOptionsBySeg(prev => ({ ...prev, [seg.id]: false }))
+        }
+    }, [selectedVideos, videoOptionsBySeg])
+
+    const handlePickVideo = useCallback((segId: number, url: string) => {
+        setSelectedVideos(prev => {
+            if (!url) {
+                const next = { ...prev }
+                delete next[segId]
+                return next
+            }
+            return { ...prev, [segId]: url }
+        })
+        setOpenOptionsSegId(null)
+    }, [])
 
     // SSE connection when job starts
     useEffect(() => {
@@ -356,6 +478,9 @@ export default function App() {
                 voice: selectedVoice,
                 rate,
                 show_subtitles: showSubtitles,
+                selected_videos: Object.fromEntries(
+                    Object.entries(selectedVideos).map(([k, v]) => [String(k), v])
+                ),
             })
             setSegments(res.segments)
             setJobId(res.job_id)
@@ -363,7 +488,7 @@ export default function App() {
             setError(e instanceof Error ? e.message : 'Error desconocido')
             setLoading(false)
         }
-    }, [script, selectedVoice, rate, showSubtitles])
+    }, [script, selectedVoice, rate, showSubtitles, selectedVideos])
 
     const handlePreviewVoice = async () => {
         setPlayingPreview(true)
@@ -503,9 +628,24 @@ export default function App() {
                             <div className="card-title">
                                 <span>🎞</span> Segmentos detectados ({segments.length})
                             </div>
+                            {Object.keys(selectedVideos).length > 0 && (
+                                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+                                    🎯 Reemplazos manuales: {Object.keys(selectedVideos).length}
+                                </div>
+                            )}
                             <div className="segments-grid">
                                 {segments.map((seg, i) => (
-                                    <SegmentCard key={seg.id} seg={seg} index={i} />
+                                    <SegmentCard
+                                        key={seg.id}
+                                        seg={seg}
+                                        index={i}
+                                        selectedUrl={selectedVideos[seg.id]}
+                                        options={videoOptionsBySeg[seg.id] || []}
+                                        loading={!!loadingOptionsBySeg[seg.id]}
+                                        isOpen={openOptionsSegId === seg.id}
+                                        onReplace={() => handleReplaceVideo(seg)}
+                                        onPick={(url) => handlePickVideo(seg.id, url)}
+                                    />
                                 ))}
                             </div>
                         </div>

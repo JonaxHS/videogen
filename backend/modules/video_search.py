@@ -80,51 +80,87 @@ def search_and_download_video(
     if not pexels_api_key and not pixabay_api_key:
         raise RuntimeError("No video provider API key configured (Pexels or Pixabay)")
 
+    options = search_video_options(
+        keywords=keywords,
+        pexels_api_key=pexels_api_key,
+        pixabay_api_key=pixabay_api_key,
+        context_text=context_text,
+        min_duration=min_duration,
+        fallback_keywords=fallback_keywords,
+        limit=1,
+        exclude_urls=exclude_urls,
+    )
+
+    if not options:
+        raise RuntimeError(f"No video found for keywords: '{keywords}'")
+    top = options[0]
+    return download_video_from_url(top["url"], provider_hint=top.get("provider", "manual"))
+
+
+def search_video_options(
+    keywords: str,
+    pexels_api_key: str = "",
+    pixabay_api_key: str = "",
+    context_text: str = "",
+    min_duration: int = 5,
+    fallback_keywords: str = "nature landscape",
+    limit: int = 8,
+    exclude_urls: set[str] | None = None,
+) -> list[dict]:
+    """Return ranked video options from configured providers for manual segment replacement."""
+    if not pexels_api_key and not pixabay_api_key:
+        raise RuntimeError("No video provider API key configured (Pexels or Pixabay)")
+
     providers = []
     if pexels_api_key:
         providers.append(("pexels", pexels_api_key))
     if pixabay_api_key:
         providers.append(("pixabay", pixabay_api_key))
 
-    video_url = None
-    provider_name = None
-    best_score = float("-inf")
     exclude_urls = exclude_urls or set()
     query_candidates = _build_query_candidates(keywords, context_text, fallback_keywords)
 
+    all_candidates = []
     for query in query_candidates:
-        for candidate_provider, candidate_key in providers:
-            if candidate_provider == "pexels":
-                candidate = _search_pexels(query, candidate_key, min_duration, exclude_urls=exclude_urls)
+        for provider_name, provider_key in providers:
+            if provider_name == "pexels":
+                all_candidates.extend(_search_pexels_candidates(query, provider_key, min_duration))
             else:
-                candidate = _search_pixabay(query, candidate_key, min_duration, exclude_urls=exclude_urls)
+                all_candidates.extend(_search_pixabay_candidates(query, provider_key, min_duration))
 
-            if candidate:
-                candidate_cache_hash = hashlib.md5(f"{candidate_provider}:{candidate['url']}".encode()).hexdigest()
-                if (
-                    candidate["url"] in exclude_urls
-                    or candidate_cache_hash in exclude_urls
-                    or f"{candidate_cache_hash}.mp4" in exclude_urls
-                ):
-                    continue
+    best_by_url: dict[str, dict] = {}
+    for candidate in all_candidates:
+        url = candidate.get("url")
+        provider = candidate.get("provider", "manual")
+        if not url:
+            continue
 
-                if candidate["score"] > best_score:
-                    best_score = candidate["score"]
-                    video_url = candidate["url"]
-                    provider_name = candidate_provider
+        cache_hash = hashlib.md5(f"{provider}:{url}".encode()).hexdigest()
+        if (
+            url in exclude_urls
+            or cache_hash in exclude_urls
+            or f"{cache_hash}.mp4" in exclude_urls
+        ):
+            continue
 
-    if not video_url or not provider_name:
-        raise RuntimeError(f"No video found for keywords: '{keywords}'")
+        prev = best_by_url.get(url)
+        if prev is None or candidate.get("score", 0) > prev.get("score", 0):
+            best_by_url[url] = candidate
 
-    # Check cache
-    cache_key = f"{provider_name}:{video_url}"
+    ranked = sorted(best_by_url.values(), key=lambda c: c.get("score", 0), reverse=True)
+    return ranked[: max(1, limit)]
+
+
+def download_video_from_url(video_url: str, provider_hint: str = "manual") -> str:
+    """Download and cache a video by URL, returning local path."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_key = f"{provider_hint}:{video_url}"
     url_hash = hashlib.md5(cache_key.encode()).hexdigest()
     cached_path = CACHE_DIR / f"{url_hash}.mp4"
 
     if cached_path.exists():
         return str(cached_path)
 
-    # Download video
     response = requests.get(video_url, stream=True, timeout=60)
     response.raise_for_status()
 
@@ -146,6 +182,20 @@ def _search_pexels(
     Search Pexels API and return best candidate with score + URL.
     Scoring balances textual relevance + duration + resolution.
     """
+    candidates = _search_pexels_candidates(query, api_key, min_duration, per_page=per_page)
+    exclude_urls = exclude_urls or set()
+    for candidate in candidates:
+        if candidate.get("url") not in exclude_urls:
+            return {"url": candidate["url"], "score": candidate.get("score", 0)}
+    return None
+
+
+def _search_pexels_candidates(
+    query: str,
+    api_key: str,
+    min_duration: int,
+    per_page: int = 20,
+) -> list[dict]:
     headers = {"Authorization": api_key}
     params = {
         "query": query,
@@ -164,15 +214,14 @@ def _search_pexels(
         data = resp.json()
     except Exception as e:
         print(f"[VideoSearch] Pexels request failed: {e}")
-        return None
+        return []
 
     videos = data.get("videos", [])
     if not videos:
-        return None
+        return []
 
     query_terms = _extract_terms(query)
-    exclude_urls = exclude_urls or set()
-    best = None
+    candidates = []
 
     for video in videos:
         duration = int(video.get("duration", 0) or 0)
@@ -189,8 +238,9 @@ def _search_pexels(
         link = selected.get("link")
         if not link:
             continue
-        if link in exclude_urls:
-            continue
+
+        pictures = video.get("video_pictures", []) or []
+        thumbnail = pictures[0].get("picture") if pictures and isinstance(pictures[0], dict) else ""
 
         metadata_text = " ".join([
             str(video.get("url", "")),
@@ -204,10 +254,15 @@ def _search_pexels(
         resolution_score = min(25.0, (int(selected.get("width", 0) or 0) * int(selected.get("height", 0) or 0)) / 150000.0)
         total_score = relevance * 10.0 + duration_score + resolution_score
 
-        if best is None or total_score > best["score"]:
-            best = {"url": link, "score": total_score}
+        candidates.append({
+            "provider": "pexels",
+            "url": link,
+            "thumbnail": thumbnail,
+            "score": total_score,
+            "duration": duration,
+        })
 
-    return best
+    return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
 
 
 def _search_pixabay(
@@ -220,6 +275,20 @@ def _search_pixabay(
     """
     Search Pixabay videos API and return best candidate with score + URL.
     """
+    candidates = _search_pixabay_candidates(query, api_key, min_duration, per_page=per_page)
+    exclude_urls = exclude_urls or set()
+    for candidate in candidates:
+        if candidate.get("url") not in exclude_urls:
+            return {"url": candidate["url"], "score": candidate.get("score", 0)}
+    return None
+
+
+def _search_pixabay_candidates(
+    query: str,
+    api_key: str,
+    min_duration: int,
+    per_page: int = 25,
+) -> list[dict]:
     params = {
         "key": api_key,
         "q": query,
@@ -233,15 +302,14 @@ def _search_pixabay(
         data = resp.json()
     except Exception as e:
         print(f"[VideoSearch] Pixabay request failed: {e}")
-        return None
+        return []
 
     hits = data.get("hits", [])
     if not hits:
-        return None
+        return []
 
     query_terms = _extract_terms(query)
-    exclude_urls = exclude_urls or set()
-    best = None
+    candidates = []
 
     for hit in hits:
         duration = int(hit.get("duration", 0) or 0)
@@ -263,8 +331,6 @@ def _search_pixabay(
         selected_url = selected.get("url")
         if not selected_url:
             continue
-        if selected_url in exclude_urls:
-            continue
 
         metadata_text = " ".join([
             str(hit.get("tags", "")),
@@ -277,10 +343,17 @@ def _search_pixabay(
         resolution_score = min(25.0, (int(selected.get("width", 0) or 0) * int(selected.get("height", 0) or 0)) / 150000.0)
         total_score = relevance * 12.0 + duration_score + resolution_score
 
-        if best is None or total_score > best["score"]:
-            best = {"url": selected_url, "score": total_score}
+        thumbnail = f"https://i.vimeocdn.com/video/{hit.get('picture_id', '')}_640x360.jpg" if hit.get("picture_id") else ""
 
-    return best
+        candidates.append({
+            "provider": "pixabay",
+            "url": selected_url,
+            "thumbnail": thumbnail,
+            "score": total_score,
+            "duration": duration,
+        })
+
+    return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
 
 
 def _build_query_candidates(keywords: str, context_text: str, fallback_keywords: str) -> list[str]:

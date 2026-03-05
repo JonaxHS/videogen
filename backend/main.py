@@ -13,12 +13,12 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv, dotenv_values
 
 from modules.script_parser import parse_script
 from modules.tts import generate_audio_sync, get_available_voices, DEFAULT_VOICE
-from modules.video_search import search_and_download_video
+from modules.video_search import search_and_download_video, search_video_options, download_video_from_url
 from modules.composer import compose_video, get_audio_duration
 
 ENV_FILE = Path("/app/.env") if Path("/app/.env").exists() else Path(".env")
@@ -65,6 +65,7 @@ class GenerateRequest(BaseModel):
     rate: str = "+0%"
     pitch: str = "+0Hz"
     show_subtitles: bool = True
+    selected_videos: Dict[str, str] = Field(default_factory=dict)
 
 
 class GenerateResponse(BaseModel):
@@ -84,6 +85,18 @@ class VoicePreviewRequest(BaseModel):
     voice: str
     rate: str = "+0%"
     pitch: str = "+0Hz"
+
+
+class ParseRequest(BaseModel):
+    script: str
+
+
+class VideoOptionsRequest(BaseModel):
+    keywords: str
+    context_text: str = ""
+    min_duration: int = 5
+    limit: int = 8
+    exclude_urls: list[str] = Field(default_factory=list)
 
 
 # ─────────────────────────────────────────────
@@ -229,6 +242,7 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         rate=req.rate,
         pitch=req.pitch,
         show_subtitles=req.show_subtitles,
+        selected_videos=req.selected_videos,
     )
 
     return GenerateResponse(
@@ -236,6 +250,31 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         segments=segments,
         message=f"Job iniciado con {len(segments)} segmento(s)"
     )
+
+
+@app.post("/api/parse")
+def parse(req: ParseRequest):
+    if not req.script.strip():
+        return {"segments": []}
+    segments = parse_script(req.script)
+    return {"segments": segments}
+
+
+@app.post("/api/video-options")
+def video_options(req: VideoOptionsRequest):
+    if not PEXELS_API_KEY and not PIXABAY_API_KEY:
+        raise HTTPException(status_code=500, detail="No video provider configured")
+
+    options = search_video_options(
+        keywords=req.keywords,
+        pexels_api_key=PEXELS_API_KEY,
+        pixabay_api_key=PIXABAY_API_KEY,
+        context_text=req.context_text,
+        min_duration=max(3, int(req.min_duration)),
+        limit=max(1, min(20, int(req.limit))),
+        exclude_urls=set(req.exclude_urls or []),
+    )
+    return {"options": options}
 
 
 @app.get("/api/status/{job_id}")
@@ -294,7 +333,7 @@ def download(job_id: str):
 # Generation Worker
 # ─────────────────────────────────────────────
 
-def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool):
+def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, selected_videos: Optional[Dict[str, str]] = None):
     """Background task: TTS + video search + composition."""
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
@@ -305,6 +344,8 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         total = len(segments)
         composed_segments = []
         used_video_urls: set[str] = set()
+
+        selected_videos = selected_videos or {}
 
         for i, seg in enumerate(segments):
             # Update progress
@@ -327,15 +368,19 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
 
             # 3. Download stock video
             job["message"] = f"Segmento {i + 1}/{total}: buscando video..."
-            video_path = search_and_download_video(
-                keywords=seg["keywords"],
-                output_path=str(job_dir / f"video_{i:03d}.mp4"),
-                pexels_api_key=PEXELS_API_KEY,
-                pixabay_api_key=PIXABAY_API_KEY,
-                context_text=seg["text"],
-                min_duration=max(3, int(audio_duration)),
-                exclude_urls=used_video_urls,
-            )
+            manual_url = selected_videos.get(str(seg.get("id", i)), "").strip()
+            if manual_url:
+                video_path = download_video_from_url(manual_url, provider_hint="manual")
+            else:
+                video_path = search_and_download_video(
+                    keywords=seg["keywords"],
+                    output_path=str(job_dir / f"video_{i:03d}.mp4"),
+                    pexels_api_key=PEXELS_API_KEY,
+                    pixabay_api_key=PIXABAY_API_KEY,
+                    context_text=seg["text"],
+                    min_duration=max(3, int(audio_duration)),
+                    exclude_urls=used_video_urls,
+                )
 
             # Track selected clip to avoid repetition in next segments
             used_video_urls.add(Path(video_path).name)
