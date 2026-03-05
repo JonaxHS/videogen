@@ -23,6 +23,11 @@ interface Job {
     output_path?: string
 }
 
+interface Config {
+    configured: boolean
+    pexels_key_preview: string
+}
+
 // ─── API Helpers ──────────────────────────────────────────────────────────────
 
 const API = '/api'
@@ -44,6 +49,101 @@ async function apiGet<T>(path: string): Promise<T> {
     const res = await fetch(API + path)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.json()
+}
+
+// ─── Setup Wizard ─────────────────────────────────────────────────────────────
+
+function SetupWizard({ onComplete }: { onComplete: () => void }) {
+    const [step, setStep] = useState(1)
+    const [pexelsKey, setPexelsKey] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [success, setSuccess] = useState(false)
+
+    const handleSave = async () => {
+        setError(null)
+        setLoading(true)
+        try {
+            await apiPost('/setup', { pexels_api_key: pexelsKey })
+            setSuccess(true)
+            setTimeout(onComplete, 1800)
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : 'Error desconocido')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className="wizard-overlay">
+            <div className="wizard-card">
+                {/* Logo */}
+                <div className="wizard-logo">🎬</div>
+                <h2 className="wizard-title">Bienvenido a VideoGen</h2>
+                <p className="wizard-subtitle">
+                    Configura tu cuenta en menos de un minuto para empezar a generar reels.
+                </p>
+
+                {/* Steps indicator */}
+                <div className="wizard-steps">
+                    {[1, 2].map(n => (
+                        <div key={n} className={`wizard-step ${step >= n ? 'active' : ''} ${step > n ? 'done' : ''}`}>
+                            <div className="wizard-step-dot">{step > n ? '✓' : n}</div>
+                            <span>{n === 1 ? 'API Key' : 'Listo'}</span>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="wizard-divider" />
+
+                {step === 1 && (
+                    <div className="wizard-body">
+                        <div className="wizard-field">
+                            <label className="wizard-label">
+                                🔑 Pexels API Key
+                            </label>
+                            <p className="wizard-hint">
+                                Regístrate gratis en{' '}
+                                <a href="https://www.pexels.com/api/" target="_blank" rel="noreferrer" className="wizard-link">
+                                    pexels.com/api
+                                </a>{' '}
+                                y copia tu API key aquí.
+                            </p>
+                            <input
+                                id="pexels-key-input"
+                                type="text"
+                                className="wizard-input"
+                                placeholder="Pega tu Pexels API Key..."
+                                value={pexelsKey}
+                                onChange={e => setPexelsKey(e.target.value)}
+                                disabled={loading}
+                                autoFocus
+                            />
+                        </div>
+
+                        {error && <div className="wizard-error">❌ {error}</div>}
+
+                        {success && (
+                            <div className="wizard-success">✅ ¡Configuración guardada! Iniciando...</div>
+                        )}
+
+                        <button
+                            id="btn-save-config"
+                            className="wizard-btn"
+                            onClick={handleSave}
+                            disabled={!pexelsKey.trim() || loading || success}
+                        >
+                            {loading ? '⏳ Guardando...' : success ? '✅ ¡Listo!' : 'Guardar y continuar →'}
+                        </button>
+                    </div>
+                )}
+
+                <p className="wizard-footer">
+                    edge-tts no requiere API key · Solo Pexels es necesaria
+                </p>
+            </div>
+        </div>
+    )
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -76,6 +176,8 @@ function SegmentCard({ seg, index }: { seg: Segment; index: number }) {
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
+    const [config, setConfig] = useState<Config | null>(null)
+    const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
     const [segments, setSegments] = useState<Segment[]>([])
     const [voices, setVoices] = useState<Voice[]>([])
@@ -88,6 +190,14 @@ export default function App() {
     const [error, setError] = useState<string | null>(null)
     const sseRef = useRef<EventSource | null>(null)
 
+    // Check config on mount
+    useEffect(() => {
+        apiGet<Config>('/config')
+            .then(c => setConfig(c))
+            .catch(() => setConfig({ configured: false, pexels_key_preview: '' }))
+            .finally(() => setCheckingConfig(false))
+    }, [])
+
     // Load voices on mount
     useEffect(() => {
         apiGet<{ voices: Voice[] }>('/voices')
@@ -99,7 +209,6 @@ export default function App() {
     useEffect(() => {
         if (!script.trim()) { setSegments([]); return }
         const timer = setTimeout(() => {
-            // Simple client-side preview (split by double newline)
             const raw = script.split(/\n{2,}/).map((t, i) => ({
                 id: i,
                 text: t.trim(),
@@ -158,11 +267,27 @@ export default function App() {
     const estTotalDuration = segments.reduce((acc, s) => acc + s.estimated_duration, 0)
     const isDone = job?.status === 'done'
     const isRunning = loading || (job && job.status === 'queued') || job?.status === 'running'
+    const rateLabel = rate === '+0%' ? 'Normal' : rate.startsWith('+') ? `Rápido` : `Lento`
 
-    const rateLabel = rate === '+0%' ? 'Normal' : rate.startsWith('+') ? `+${rate.replace('+', '').replace('%', '')}% Rápido` : `${rate.replace('%', '')}% Lento`
+    // Loading screen
+    if (checkingConfig) {
+        return (
+            <div className="app" style={{ alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+                <div style={{ textAlign: 'center', color: 'var(--text-2)' }}>
+                    <div className="spinner" />
+                    <p style={{ marginTop: 16 }}>Iniciando VideoGen...</p>
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div className="app">
+            {/* Setup Wizard overlay if not configured */}
+            {config && !config.configured && (
+                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '' })} />
+            )}
+
             {/* ── Header ─────────────────────────────────────────────── */}
             <header className="header">
                 <div className="logo-icon">🎬</div>
@@ -170,20 +295,30 @@ export default function App() {
                     <h1>VideoGen</h1>
                     <p>Generador de Reels con IA</p>
                 </div>
-                <span className="badge">🎙 edge-tts · 🎞 Pexels</span>
+                {/* Config status in header */}
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {config?.configured && (
+                        <button
+                            className="badge"
+                            style={{ cursor: 'pointer', border: '1px solid var(--border)' }}
+                            onClick={() => setConfig(c => c ? { ...c, configured: false } : c)}
+                            title="Cambiar API keys"
+                        >
+                            ⚙️ Config
+                        </button>
+                    )}
+                    <span className="badge">🎙 edge-tts · 🎞 Pexels</span>
+                </div>
             </header>
 
             {/* ── Main Grid ──────────────────────────────────────────── */}
             <main className="main">
 
-                {/* Left column: Script input + segments */}
+                {/* Left column */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-                    {/* Script input */}
                     <div className="card">
-                        <div className="card-title">
-                            <span>📝</span> Tu Guion
-                        </div>
+                        <div className="card-title"><span>📝</span> Tu Guion</div>
                         <textarea
                             id="script-input"
                             className="script-area"
@@ -200,7 +335,6 @@ export default function App() {
                         </div>
                     </div>
 
-                    {/* Segments preview */}
                     {segments.length > 0 && (
                         <div className="card">
                             <div className="card-title">
@@ -215,16 +349,13 @@ export default function App() {
                     )}
                 </div>
 
-                {/* Right sidebar */}
+                {/* Sidebar */}
                 <aside className="sidebar">
 
-                    {/* Settings */}
                     <div className="card">
                         <div className="card-title"><span>⚙️</span> Configuración</div>
-
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
 
-                            {/* Voice selector */}
                             <div className="field">
                                 <label htmlFor="voice-select">🎙 Voz</label>
                                 <select
@@ -239,14 +370,10 @@ export default function App() {
                                 </select>
                             </div>
 
-                            {/* Speed */}
                             <div className="field">
                                 <label>⚡ Velocidad — <span style={{ color: 'var(--accent-glow)' }}>{rateLabel}</span></label>
                                 <input
-                                    type="range"
-                                    min={-30}
-                                    max={30}
-                                    step={5}
+                                    type="range" min={-30} max={30} step={5}
                                     value={parseInt(rate)}
                                     onChange={e => setRate(`${+e.target.value >= 0 ? '+' : ''}${e.target.value}%`)}
                                     disabled={!!isRunning}
@@ -254,33 +381,34 @@ export default function App() {
                                 />
                             </div>
 
-                            {/* Subtitles toggle */}
                             <div className="field">
                                 <div className="toggle-row">
                                     <label>💬 Subtítulos</label>
                                     <Toggle on={showSubtitles} onToggle={() => setShowSubtitles(p => !p)} />
                                 </div>
                             </div>
-
                         </div>
                     </div>
 
-                    {/* Generate button */}
                     <button
                         id="btn-generate"
                         className="btn-generate"
                         onClick={handleGenerate}
-                        disabled={!script.trim() || !!isRunning}
+                        disabled={!script.trim() || !!isRunning || !config?.configured}
                     >
                         {isRunning
                             ? <><span className="status-dot running" />Generando...</>
                             : <>✨ Generar Reel</>}
                     </button>
 
-                    {/* Error */}
+                    {!config?.configured && (
+                        <div className="error-box" style={{ textAlign: 'center' }}>
+                            ⚙️ Configura tu API key primero
+                        </div>
+                    )}
+
                     {error && <div className="error-box">❌ {error}</div>}
 
-                    {/* Progress */}
                     {job && job.status !== 'done' && (
                         <div className="card">
                             <div className="card-title">
@@ -303,17 +431,11 @@ export default function App() {
                         </div>
                     )}
 
-                    {/* Video result */}
                     {isDone && jobId && (
                         <div className="card">
                             <div className="card-title"><span className="status-dot done" />¡Video listo!</div>
                             <div className="video-container">
-                                <video
-                                    className="video-player"
-                                    controls
-                                    autoPlay
-                                    src={`/api/download/${jobId}`}
-                                />
+                                <video className="video-player" controls autoPlay src={`/api/download/${jobId}`} />
                             </div>
                             <a
                                 className="btn-download"

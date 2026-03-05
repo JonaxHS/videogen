@@ -6,7 +6,7 @@ import os
 import uuid
 import asyncio
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -14,14 +14,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 
 from modules.script_parser import parse_script
 from modules.tts import generate_audio_sync, get_available_voices, DEFAULT_VOICE
 from modules.video_search import search_and_download_video
 from modules.composer import compose_video, get_audio_duration
 
-load_dotenv()
+ENV_FILE = Path("/app/.env") if Path("/app/.env").exists() else Path(".env")
+load_dotenv(dotenv_path=ENV_FILE, override=True)
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 OUTPUT_DIR = Path("/app/output")
@@ -61,13 +62,66 @@ class GenerateResponse(BaseModel):
     message: str
 
 
+class SetupRequest(BaseModel):
+    pexels_api_key: str
+
+
 # ─────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "pexels_configured": bool(PEXELS_API_KEY)}
+    return {
+        "status": "ok",
+        "configured": bool(PEXELS_API_KEY),
+        "pexels_configured": bool(PEXELS_API_KEY),
+    }
+
+
+@app.get("/api/config")
+def get_config():
+    """Return current configuration (keys are masked for security)."""
+    key = PEXELS_API_KEY
+    masked = (key[:6] + "*" * (len(key) - 6)) if len(key) > 6 else ("*" * len(key))
+    return {
+        "configured": bool(key),
+        "pexels_key_preview": masked if key else "",
+    }
+
+
+@app.post("/api/setup")
+def setup(req: SetupRequest):
+    """Save configuration to .env file and reload env vars."""
+    global PEXELS_API_KEY
+
+    key = req.pexels_api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="La API key no puede estar vacía")
+
+    # Validate key looks reasonable (Pexels keys are alphanumeric)
+    if len(key) < 20:
+        raise HTTPException(status_code=400, detail="La API key parece inválida (muy corta)")
+
+    # Write to .env file
+    _write_env({"PEXELS_API_KEY": key})
+
+    # Reload in-process
+    load_dotenv(dotenv_path=ENV_FILE, override=True)
+    PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+
+    return {"success": True, "message": "Configuración guardada correctamente"}
+
+
+def _write_env(updates: dict):
+    """Merge updates into the .env file."""
+    existing = {}
+    if ENV_FILE.exists():
+        existing = dict(dotenv_values(ENV_FILE))
+    existing.update(updates)
+    with open(ENV_FILE, "w") as f:
+        for k, v in existing.items():
+            f.write(f"{k}={v}\n")
 
 
 @app.get("/api/voices")
