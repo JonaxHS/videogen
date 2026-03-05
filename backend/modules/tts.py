@@ -23,20 +23,17 @@ ELEVENLABS_VOICES = {
     "VR6AewLTigWG4xSOukaG": "Rachel (Mujer · Calma/Noticias) ✦"
 }
 
-# ─── Deepgram Voices (Aura TTS) ─────────────────────────────────────────
+# ─── Deepgram Voices (Aura 2 TTS - Spanish) ──────────────────────────────
 
 DEEPGRAM_VOICES = {
-    "aura-asteria-en": "Asteria (Mujer · US English)",
-    "aura-luna-en": "Luna (Mujer · US English)",
-    "aura-stella-en": "Stella (Mujer · US English)",
-    "aura-hera-en": "Hera (Mujer · US English)",
-    "aura-orion-en": "Orion (Hombre · US English)",
-    "aura-arcas-en": "Arcas (Hombre · US English)",
-    "aura-perseus-en": "Perseus (Hombre · US English)",
-    "aura-angus-en": "Angus (Hombre · Irish English)",
-    "aura-orpheus-en": "Orpheus (Hombre · UK English)",
-    "aura-helios-en": "Helios (Hombre · UK English)",
-    "aura-zeus-en": "Zeus (Hombre · US English)",
+    "aura-2-alvaro-es": "Alvaro (Hombre · Español - Peninsular)",
+    "aura-2-celeste-es": "Celeste (Mujer · Español - Colombia)",
+    "aura-2-estrella-es": "Estrella (Mujer · Español - LATAM)",
+    "aura-2-javier-es": "Javier (Hombre · Español - Peninsular)",
+    "aura-2-nestor-es": "Néstor (Hombre · Español - Peninsular)",
+    "aura-2-silvia-es": "Silvia (Mujer · Español - Peninsular)",
+    "aura-2-sirio-es": "Sirio (Hombre · Español - México)",
+    "aura-2-valerio-es": "Valerio (Hombre · Español - México)",
 }
 
 # ─── Free Voices (edge-tts / gTTS) ────────────────────────────────────────
