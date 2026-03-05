@@ -49,6 +49,15 @@ docker compose up --build
 | `ELEVENLABS_API_KEY` | (Opcional) API Key para voces premium de ElevenLabs |
 | `DEEPGRAM_API_KEY` | (Opcional) API Key para voces premium de Deepgram |
 | `CORS_ORIGINS` | (Opcional) Orígenes permitidos por CORS, separados por coma |
+| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (obligatorio para integración) |
+| `TELEGRAM_BACKEND_URL` | URL interna del backend usada por el bot (default: `http://backend:8000`) |
+| `PUBLIC_BACKEND_URL` | URL pública opcional para mensajes de fallback |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Lista opcional de chat IDs permitidos, separados por coma |
+| `TELEGRAM_DEFAULT_VOICE` | Voz por defecto para generar desde Telegram |
+| `TELEGRAM_DEFAULT_RATE` | Velocidad por defecto en Telegram (ej: `+0%`) |
+| `TELEGRAM_DEFAULT_PITCH` | Pitch por defecto en Telegram (ej: `+0Hz`) |
+| `TELEGRAM_DEFAULT_SHOW_SUBTITLES` | `true`/`false` para subtítulos por defecto |
+| `TELEGRAM_DEFAULT_SUBTITLE_STYLE` | Estilo por defecto (`classic`, `luminous`, `cinema`, `yellow-subtitle`, `minimal`, `neon`) |
 
 ## Voces disponibles
 
@@ -68,3 +77,30 @@ docker compose up --build
 | Frontend | http://localhost:5173 |
 | Backend API | http://localhost:8000 |
 | API Docs | http://localhost:8000/docs |
+
+## Bot de Telegram 🤖
+
+Con el servicio `telegram-bot`, puedes mandar un guion por chat y recibir el video terminado.
+
+### 1) Crear bot
+- Habla con `@BotFather` en Telegram
+- Ejecuta `/newbot`
+- Copia el token y pégalo en `.env` en `TELEGRAM_BOT_TOKEN`
+
+### 2) Levantar servicios
+
+```bash
+docker compose up -d --build
+```
+
+Esto levanta `backend`, `frontend` y `telegram-bot`.
+
+### 3) Usar el bot
+- Envíale texto normal con tu guion, o
+- Usa `/generate tu guion aquí`
+
+El bot:
+1. Crea el job en `/api/generate`
+2. Monitorea progreso con `/api/status/{job_id}`
+3. Descarga `/api/download/{job_id}`
+4. Te envía el MP4 directo al chat

@@ -21,6 +21,16 @@ services:
       - backend
     restart: unless-stopped
 
+  telegram-bot:
+    build: ./backend
+    container_name: videogen-telegram-bot
+    command: ["python", "telegram_bot.py"]
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 volumes:
   output:
   cache:
