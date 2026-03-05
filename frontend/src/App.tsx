@@ -62,7 +62,7 @@ async function apiGet<T>(path: string): Promise<T> {
 
 // ─── Setup Wizard ─────────────────────────────────────────────────────────────
 
-function SetupWizard({ onComplete }: { onComplete: () => void }) {
+function SetupWizard({ onComplete, existingConfig }: { onComplete: () => void, existingConfig?: Config }) {
     const [step, setStep] = useState(1)
     const [pexelsKey, setPexelsKey] = useState('')
     const [pixabayKey, setPixabayKey] = useState('')
@@ -71,6 +71,12 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
+
+    // Indicators for already-configured keys
+    const hasPexels = !!existingConfig?.pexels_key_preview
+    const hasPixabay = !!existingConfig?.pixabay_key_preview
+    const hasElevenlabs = !!existingConfig?.elevenlabs_key_preview
+    const hasDeepgram = !!existingConfig?.deepgram_key_preview
 
     const handleSave = async () => {
         setError(null)
@@ -130,7 +136,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                                 id="pexels-key-input"
                                 type="text"
                                 className="wizard-input"
-                                placeholder="Pega tu Pexels API Key..."
+                                placeholder={hasPexels ? `Ya configurada: ${existingConfig?.pexels_key_preview || ''}` : "Pega tu Pexels API Key..."}
                                 value={pexelsKey}
                                 onChange={e => setPexelsKey(e.target.value)}
                                 disabled={loading}
@@ -153,7 +159,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                                 id="pixabay-key-input"
                                 type="text"
                                 className="wizard-input"
-                                placeholder="Pega tu Pixabay API Key..."
+                                placeholder={hasPixabay ? `Ya configurada: ${existingConfig?.pixabay_key_preview || ''}` : "Pega tu Pixabay API Key..."}
                                 value={pixabayKey}
                                 onChange={e => setPixabayKey(e.target.value)}
                                 disabled={loading}
@@ -175,7 +181,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                                 id="elevenlabs-key-input"
                                 type="text"
                                 className="wizard-input"
-                                placeholder="Pega tu ElevenLabs API Key..."
+                                placeholder={hasElevenlabs ? `Ya configurada: ${existingConfig?.elevenlabs_key_preview || ''}` : "Pega tu ElevenLabs API Key..."}
                                 value={elevenlabsKey}
                                 onChange={e => setElevenlabsKey(e.target.value)}
                                 disabled={loading}
@@ -195,7 +201,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                                 id="deepgram-key-input"
                                 type="text"
                                 className="wizard-input"
-                                placeholder="Pega tu Deepgram API Key..."
+                                placeholder={hasDeepgram ? `Ya configurada: ${existingConfig?.deepgram_key_preview || ''}` : "Pega tu Deepgram API Key..."}
                                 value={deepgramKey}
                                 onChange={e => setDeepgramKey(e.target.value)}
                                 disabled={loading}
@@ -213,7 +219,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                             className="wizard-btn"
                             onClick={handleSave}
                             // Requerimos al menos una API de videos: Pexels o Pixabay
-                            disabled={(!pexelsKey.trim() && !pixabayKey.trim()) || loading || success}
+                            disabled={(!pexelsKey.trim() && !pixabayKey.trim() && !hasPexels && !hasPixabay) || loading || success}
                         >
                             {loading ? '⏳ Guardando...' : success ? '✅ ¡Listo!' : 'Guardar y continuar →'}
                         </button>
@@ -415,7 +421,18 @@ export default function App() {
         <div className="app">
             {/* Setup Wizard overlay if not configured */}
             {config && !config.configured && (
-                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })} />
+                <SetupWizard 
+                    onComplete={async () => {
+                        // Reload config from backend after saving
+                        try {
+                            const newConfig = await apiGet<Config>('/config')
+                            setConfig(newConfig)
+                        } catch {
+                            setConfig({ configured: true, pexels_key_preview: '', pixabay_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })
+                        }
+                    }}
+                    existingConfig={config}
+                />
             )}
 
             {/* ── Header ─────────────────────────────────────────────── */}
