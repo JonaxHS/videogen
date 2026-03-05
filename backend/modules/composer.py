@@ -191,8 +191,6 @@ def _escape_ffmpeg_text(text: str) -> str:
     text = text.replace('%', '\\%')
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
-    # Remove markdown formatting that causes issues
-    text = text.replace('**', '')        # Remove bold markers
     text = re.sub(r'\s+', ' ', text).strip()
     # Word wrap: insert newline every ~40 chars at word boundary
     return _word_wrap(text, 40)
