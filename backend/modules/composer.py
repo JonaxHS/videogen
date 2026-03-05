@@ -70,7 +70,8 @@ def compose_video(
     concat_list_path = temp_dir / "concat.txt"
     with open(concat_list_path, "w") as f:
         for sf in segment_files:
-            f.write(f"file '{sf}'\n")
+            # Use absolute path to ensure FFmpeg finds it reliably regardless of CWD parsing
+            f.write(f"file '{Path(sf).resolve().as_posix()}'\n")
 
     subprocess.run([
         "ffmpeg", "-y",
