@@ -119,24 +119,26 @@ def setup(req: SetupRequest):
     """Save configuration to .env file and reload env vars."""
     global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY
 
-    pexels_key = req.pexels_api_key.strip()
-    pixabay_key = req.pixabay_api_key.strip()
-    elevenlabs_key = req.elevenlabs_api_key.strip()
-    deepgram_key = req.deepgram_api_key.strip()
+    # Only update non-empty keys (preserve existing if user leaves blank)
+    new_pexels = req.pexels_api_key.strip()
+    new_pixabay = req.pixabay_api_key.strip()
+    new_elevenlabs = req.elevenlabs_api_key.strip()
+    new_deepgram = req.deepgram_api_key.strip()
 
+    pexels_key = new_pexels if new_pexels else PEXELS_API_KEY
+    pixabay_key = new_pixabay if new_pixabay else PIXABAY_API_KEY
+    elevenlabs_key = new_elevenlabs if new_elevenlabs else ELEVENLABS_API_KEY
+    deepgram_key = new_deepgram if new_deepgram else DEEPGRAM_API_KEY
+
+    # Validate NEW keys only (don't re-validate existing)
+    if new_pexels and len(new_pexels) < 20:
+        raise HTTPException(status_code=400, detail="La API key de Pexels parece inválida (muy corta)")
+    if new_pixabay and len(new_pixabay) < 12:
+        raise HTTPException(status_code=400, detail="La API key de Pixabay parece inválida (muy corta)")
+
+    # Require at least one video provider (existing or new)
     if not pexels_key and not pixabay_key:
         raise HTTPException(status_code=400, detail="Debes configurar al menos una API key de videos (Pexels o Pixabay)")
-    
-    if not elevenlabs_key and not deepgram_key:
-        # At least one premium TTS or Pexels for fallback is good, but let's just make Pexels strict
-        pass
-
-    # Validate keys look reasonable (simple sanity check)
-    if pexels_key and len(pexels_key) < 20:
-        raise HTTPException(status_code=400, detail="La API key de Pexels parece inválida (muy corta)")
-
-    if pixabay_key and len(pixabay_key) < 12:
-        raise HTTPException(status_code=400, detail="La API key de Pixabay parece inválida (muy corta)")
 
     # Write to .env file
     _write_env({
