@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    container_name: videogen-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - ./backend/cache:/app/cache
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: videogen-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  output:
+  cache:
