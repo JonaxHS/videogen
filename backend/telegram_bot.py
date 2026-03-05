@@ -35,6 +35,15 @@ def _tg_url(method: str) -> str:
     return f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
 
 
+def _tg_call(method: str, *, json: Optional[dict] = None, params: Optional[dict] = None, timeout: int = 30) -> dict:
+    response = requests.post(_tg_url(method), json=json, params=params, timeout=timeout)
+    response.raise_for_status()
+    payload = response.json()
+    if not payload.get("ok", False):
+        raise RuntimeError(f"Telegram API {method} error: {payload}")
+    return payload
+
+
 def send_message(chat_id: int, text: str, reply_to_message_id: Optional[int] = None) -> None:
     payload = {
         "chat_id": chat_id,
@@ -42,11 +51,11 @@ def send_message(chat_id: int, text: str, reply_to_message_id: Optional[int] = N
     }
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
-    requests.post(_tg_url("sendMessage"), json=payload, timeout=30)
+    _tg_call("sendMessage", json=payload, timeout=30)
 
 
 def send_chat_action(chat_id: int, action: str) -> None:
-    requests.post(_tg_url("sendChatAction"), json={"chat_id": chat_id, "action": action}, timeout=15)
+    _tg_call("sendChatAction", json={"chat_id": chat_id, "action": action}, timeout=15)
 
 
 def send_video_file(chat_id: int, file_path: str, caption: str) -> None:
@@ -151,7 +160,7 @@ def parse_user_script(text: str) -> Optional[str]:
     if not text:
         return None
 
-    if text.startswith("/start") or text.startswith("/help"):
+    if text.startswith("/start") or text.startswith("/help") or text.startswith("/ping") or text.startswith("/id"):
         return None
 
     if text.startswith("/generate"):
@@ -188,9 +197,19 @@ def handle_update(update: dict) -> None:
             "Hola 👋\n\n"
             "Envíame un guion y te regreso un video automáticamente.\n\n"
             "También puedes usar:\n"
-            "`/generate tu guion aquí`",
+            "`/generate tu guion aquí`\n"
+            "`/ping` para verificar el bot\n"
+            "`/id` para ver tu chat id",
             reply_to_message_id=message_id,
         )
+        return
+
+    if text.startswith("/ping"):
+        send_message(chat_id, "✅ Bot activo y escuchando.", reply_to_message_id=message_id)
+        return
+
+    if text.startswith("/id"):
+        send_message(chat_id, f"🆔 Tu chat_id es: {chat_id}", reply_to_message_id=message_id)
         return
 
     script = parse_user_script(text)
@@ -205,18 +224,19 @@ def run_bot() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN no está configurado en .env")
 
-    print("[telegram-bot] iniciado")
+    # Ensure polling mode works even if a previous webhook was configured
+    _tg_call("deleteWebhook", json={"drop_pending_updates": False}, timeout=30)
+    me = _tg_call("getMe", timeout=30).get("result", {})
+    print(f"[telegram-bot] iniciado como @{me.get('username', 'unknown')} (id={me.get('id', 'n/a')})")
     offset = 0
 
     while True:
         try:
-            response = requests.get(
-                _tg_url("getUpdates"),
-                params={"offset": offset, "timeout": POLL_TIMEOUT},
-                timeout=POLL_TIMEOUT + 10,
-            )
+            response = requests.get(_tg_url("getUpdates"), params={"offset": offset, "timeout": POLL_TIMEOUT}, timeout=POLL_TIMEOUT + 10)
             response.raise_for_status()
             payload = response.json()
+            if not payload.get("ok", False):
+                raise RuntimeError(f"Telegram API getUpdates error: {payload}")
             updates = payload.get("result", [])
 
             for upd in updates:
