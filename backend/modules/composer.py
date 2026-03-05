@@ -118,7 +118,7 @@ def _compose_segment(
     4. Mix with TTS audio
     """
     # FFmpeg filter chain:
-    # 1. Scale and pad to 9:16 (preserve full content from any orientation)
+    # 1. Scale and crop to 9:16 (cover mode, no black bars)
     # 2. Add subtitle text only if show_subtitles=True
     if show_subtitles:
         safe_text = _escape_ffmpeg_text(text)
@@ -129,8 +129,8 @@ def _compose_segment(
 
         filter_complex = (
             f"[0:v]"
-            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
-            f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(iw-{OUTPUT_WIDTH})/2:(ih-{OUTPUT_HEIGHT})/2,"
             f"fps={FPS}"
             f"[scaled];"
             f"[scaled]"
@@ -151,8 +151,8 @@ def _compose_segment(
     else:
         filter_complex = (
             f"[0:v]"
-            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
-            f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(iw-{OUTPUT_WIDTH})/2:(ih-{OUTPUT_HEIGHT})/2,"
             f"fps={FPS}"
             f"[out]"
         )
