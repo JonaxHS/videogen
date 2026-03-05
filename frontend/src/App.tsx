@@ -17,6 +17,7 @@ interface Voice {
 
 interface VoicesResponse {
     elevenlabs: Voice[]
+    deepgram: Voice[]
     free: Voice[]
 }
 
@@ -32,6 +33,7 @@ interface Config {
     configured: boolean
     pexels_key_preview: string
     elevenlabs_key_preview: string
+    deepgram_key_preview: string
 }
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
@@ -63,6 +65,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
     const [step, setStep] = useState(1)
     const [pexelsKey, setPexelsKey] = useState('')
     const [elevenlabsKey, setElevenlabsKey] = useState('')
+    const [deepgramKey, setDeepgramKey] = useState('')
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
@@ -71,7 +74,11 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
         setError(null)
         setLoading(true)
         try {
-            await apiPost('/setup', { pexels_api_key: pexelsKey, elevenlabs_api_key: elevenlabsKey })
+            await apiPost('/setup', {
+                pexels_api_key: pexelsKey,
+                elevenlabs_api_key: elevenlabsKey,
+                deepgram_api_key: deepgramKey
+            })
             setSuccess(true)
             setTimeout(onComplete, 1800)
         } catch (e: unknown) {
@@ -150,6 +157,26 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                             />
                         </div>
 
+                        <div className="wizard-field" style={{ marginTop: '12px' }}>
+                            <label className="wizard-label">
+                                🎙️ Deepgram API Key (Opcional)
+                            </label>
+                            <p className="wizard-hint">
+                                <a href="https://console.deepgram.com/" target="_blank" rel="noreferrer" className="wizard-link">
+                                    console.deepgram.com
+                                </a>
+                            </p>
+                            <input
+                                id="deepgram-key-input"
+                                type="text"
+                                className="wizard-input"
+                                placeholder="Pega tu Deepgram API Key..."
+                                value={deepgramKey}
+                                onChange={e => setDeepgramKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+
                         {error && <div className="wizard-error">❌ {error}</div>}
 
                         {success && (
@@ -160,7 +187,8 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                             id="btn-save-config"
                             className="wizard-btn"
                             onClick={handleSave}
-                            disabled={!pexelsKey.trim() || !elevenlabsKey.trim() || loading || success}
+                            // Deshabilitamos si no hay Pexels o si están vacías ambas TTS
+                            disabled={!pexelsKey.trim() || (!elevenlabsKey.trim() && !deepgramKey.trim()) || loading || success}
                         >
                             {loading ? '⏳ Guardando...' : success ? '✅ ¡Listo!' : 'Guardar y continuar →'}
                         </button>
@@ -168,7 +196,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                 )}
 
                 <p className="wizard-footer">
-                    VideoGen requiere Pexels para videos y ElevenLabs para voz hiperrealista.
+                    VideoGen requiere Pexels para videos y al menos una (ElevenLabs o Deepgram) para voz hiperrealista.
                 </p>
             </div>
         </div>
@@ -209,7 +237,7 @@ export default function App() {
     const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
     const [segments, setSegments] = useState<Segment[]>([])
-    const [voices, setVoices] = useState<VoicesResponse>({ elevenlabs: [], free: [] })
+    const [voices, setVoices] = useState<VoicesResponse>({ elevenlabs: [], deepgram: [], free: [] })
     const [selectedVoice, setSelectedVoice] = useState('ErXwobaYiN019PkySvjV')
     const [showSubtitles, setShowSubtitles] = useState(true)
     const [rate, setRate] = useState('+0%')
@@ -224,7 +252,7 @@ export default function App() {
     useEffect(() => {
         apiGet<Config>('/config')
             .then(c => setConfig(c))
-            .catch(() => setConfig({ configured: false, pexels_key_preview: '', elevenlabs_key_preview: '' }))
+            .catch(() => setConfig({ configured: false, pexels_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' }))
             .finally(() => setCheckingConfig(false))
     }, [])
 
@@ -362,7 +390,7 @@ export default function App() {
         <div className="app">
             {/* Setup Wizard overlay if not configured */}
             {config && !config.configured && (
-                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '', elevenlabs_key_preview: '' })} />
+                <SetupWizard onComplete={() => setConfig({ configured: true, pexels_key_preview: '', elevenlabs_key_preview: '', deepgram_key_preview: '' })} />
             )}
 
             {/* ── Header ─────────────────────────────────────────────── */}
@@ -443,6 +471,9 @@ export default function App() {
                                 >
                                     <optgroup label="Voces ElevenLabs (Premium ✦)">
                                         {voices.elevenlabs.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                    </optgroup>
+                                    <optgroup label="Voces Deepgram (Aura TTS ✦)">
+                                        {voices.deepgram.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                                     </optgroup>
                                     <optgroup label="Voces Gratuitas (Microsoft / Google)">
                                         {voices.free.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}

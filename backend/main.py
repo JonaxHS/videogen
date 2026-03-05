@@ -26,6 +26,7 @@ load_dotenv(dotenv_path=ENV_FILE, override=True)
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
 OUTPUT_DIR = Path("output")
 CACHE_DIR = Path("backend/cache")
@@ -69,6 +70,7 @@ class GenerateResponse(BaseModel):
 class SetupRequest(BaseModel):
     pexels_api_key: str
     elevenlabs_api_key: str
+    deepgram_api_key: str
 
 class VoicePreviewRequest(BaseModel):
     text: str
@@ -85,9 +87,10 @@ class VoicePreviewRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "configured": bool(PEXELS_API_KEY and ELEVENLABS_API_KEY),
+        "configured": bool(PEXELS_API_KEY and (ELEVENLABS_API_KEY or DEEPGRAM_API_KEY)),
         "pexels_configured": bool(PEXELS_API_KEY),
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
+        "deepgram_configured": bool(DEEPGRAM_API_KEY),
     }
 
 
@@ -95,38 +98,45 @@ def health():
 def get_config():
     """Return current configuration (keys are masked for security)."""
     return {
-        "configured": bool(PEXELS_API_KEY and ELEVENLABS_API_KEY),
+        "configured": bool(PEXELS_API_KEY and (ELEVENLABS_API_KEY or DEEPGRAM_API_KEY)),
         "pexels_key_preview": f"...{PEXELS_API_KEY[-4:]}" if PEXELS_API_KEY else "",
-        "elevenlabs_key_preview": f"...{ELEVENLABS_API_KEY[-4:]}" if ELEVENLABS_API_KEY else ""
+        "elevenlabs_key_preview": f"...{ELEVENLABS_API_KEY[-4:]}" if ELEVENLABS_API_KEY else "",
+        "deepgram_key_preview": f"...{DEEPGRAM_API_KEY[-4:]}" if DEEPGRAM_API_KEY else ""
     }
 
 
 @app.post("/api/setup")
 def setup(req: SetupRequest):
     """Save configuration to .env file and reload env vars."""
-    global PEXELS_API_KEY, ELEVENLABS_API_KEY
+    global PEXELS_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY
 
     pexels_key = req.pexels_api_key.strip()
     elevenlabs_key = req.elevenlabs_api_key.strip()
+    deepgram_key = req.deepgram_api_key.strip()
 
     if not pexels_key:
         raise HTTPException(status_code=400, detail="La API key de Pexels no puede estar vacía")
-    if not elevenlabs_key:
-        raise HTTPException(status_code=400, detail="La API key de ElevenLabs no puede estar vacía")
+    
+    if not elevenlabs_key and not deepgram_key:
+        # At least one premium TTS or Pexels for fallback is good, but let's just make Pexels strict
+        pass
 
     # Validate keys look reasonable
     if len(pexels_key) < 20:
         raise HTTPException(status_code=400, detail="La API key de Pexels parece inválida (muy corta)")
-    if len(elevenlabs_key) < 20: # ElevenLabs keys are typically longer
-        raise HTTPException(status_code=400, detail="La API key de ElevenLabs parece inválida (muy corta)")
 
     # Write to .env file
-    _write_env({"PEXELS_API_KEY": pexels_key, "ELEVENLABS_API_KEY": elevenlabs_key})
+    _write_env({
+        "PEXELS_API_KEY": pexels_key, 
+        "ELEVENLABS_API_KEY": elevenlabs_key,
+        "DEEPGRAM_API_KEY": deepgram_key
+    })
 
     # Reload in-process
     load_dotenv(dotenv_path=ENV_FILE, override=True)
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+    DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
     return {"success": True, "message": "Configuración guardada correctamente"}
 

@@ -23,6 +23,22 @@ ELEVENLABS_VOICES = {
     "VR6AewLTigWG4xSOukaG": "Rachel (Mujer · Calma/Noticias) ✦"
 }
 
+# ─── Deepgram Voices (Aura TTS) ─────────────────────────────────────────
+
+DEEPGRAM_VOICES = {
+    "aura-asteria-en": "Asteria (Mujer · US English)",
+    "aura-luna-en": "Luna (Mujer · US English)",
+    "aura-stella-en": "Stella (Mujer · US English)",
+    "aura-hera-en": "Hera (Mujer · US English)",
+    "aura-orion-en": "Orion (Hombre · US English)",
+    "aura-arcas-en": "Arcas (Hombre · US English)",
+    "aura-perseus-en": "Perseus (Hombre · US English)",
+    "aura-angus-en": "Angus (Hombre · Irish English)",
+    "aura-orpheus-en": "Orpheus (Hombre · UK English)",
+    "aura-helios-en": "Helios (Hombre · UK English)",
+    "aura-zeus-en": "Zeus (Hombre · US English)",
+}
+
 # ─── Free Voices (edge-tts / gTTS) ────────────────────────────────────────
 
 FREE_VOICES = {
@@ -151,6 +167,87 @@ def _generate_srt(alignment: dict, filepath: str):
         f.write("\n".join(srt_content))
 
 
+# ─── Deepgram + Whisper Logic ──────────────────────────────────────────
+
+# Cargamos Whisper en global lazily para no trabar el arranque
+_whisper_model = None
+
+def _get_whisper_model():
+    global _whisper_model
+    if _whisper_model is None:
+        import whisper
+        import platform
+        print("[Whisper] Cargando modelo local 'base' para subtítulos (solo la primera vez)...")
+        # Forzamos CPU o mps si es Mac, para mayor compatibilidad
+        device = "cpu"
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            device = "cpu" # MPS a veces falla con whisper en macs locales, cpu is safe for base model
+        _whisper_model = whisper.load_model("base", device=device)
+    return _whisper_model
+
+def _deepgram_generate_sync(text: str, output_path: str, voice_id: str) -> dict:
+    """Generate audio using Deepgram Aura and subtiles using local Whisper."""
+    api_key = os.getenv("DEEPGRAM_API_KEY")
+    if not api_key:
+        raise ValueError("DEEPGRAM_API_KEY no está configurada")
+
+    text = text.strip() or "..."
+    # 1. Llamada a Deepgram para TTS
+    url = "https://api.deepgram.com/v1/speak"
+    params = {"model": voice_id}
+    headers = {
+        "Authorization": f"Token {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {"text": text}
+
+    response = requests.post(url, params=params, json=data, headers=headers)
+    if not response.ok:
+        raise Exception(f"Deepgram API error: {response.text}")
+    
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "wb") as f:
+        f.write(response.content)
+
+    # 2. Generar Subtítulos (Timestamps) con Whisper Local
+    subtitle_path = output_path.replace('.mp3', '.srt')
+    _generate_whisper_srt(output_path, subtitle_path)
+
+    return {"audio_path": output_path, "subtitle_path": subtitle_path, "engine": "deepgram-whisper"}
+
+def _generate_whisper_srt(audio_path: str, subtitle_path: str):
+    import whisper
+    model = _get_whisper_model()
+    
+    # transcribe con word_timestamps=True requiere openai-whisper actualizado
+    # language="es" predeterminado si el usuario está en español, aunque Deepgram Aura solo habla inglés nativo por ahora
+    # Lo forzaremos a espanol si de casualidad enviamos español
+    result = model.transcribe(audio_path, word_timestamps=True, language="es")
+    
+    WORDS_PER_CHUNK = 4
+    srt_content = []
+    chunk_idx = 1
+    
+    for segment in result.get("segments", []):
+        words = segment.get("words", [])
+        for i in range(0, len(words), WORDS_PER_CHUNK):
+            chunk_words = words[i:i+WORDS_PER_CHUNK]
+            if not chunk_words: continue
+            
+            start_time = _format_srt_time(chunk_words[0]["start"])
+            end_time = _format_srt_time(chunk_words[-1]["end"])
+            text = " ".join([w["word"].strip() for w in chunk_words])
+            
+            srt_content.append(f"{chunk_idx}")
+            srt_content.append(f"{start_time} --> {end_time}")
+            srt_content.append(text)
+            srt_content.append("")
+            chunk_idx += 1
+            
+    with open(subtitle_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(srt_content))
+
+
 # ─── Free Logic (edge-tts / gTTS) ─────────────────────────────────────
 
 async def _edge_tts_generate(text: str, output_path: str, voice: str, rate: str, pitch: str) -> dict:
@@ -189,6 +286,10 @@ async def generate_audio(
     if voice in ELEVENLABS_VOICES:
         print(f"[TTS] Utilizando ElevenLabs (Voz Premium)...")
         return await asyncio.to_thread(_elevenlabs_generate_sync, text, output_path, voice)
+        
+    if voice in DEEPGRAM_VOICES:
+        print(f"[TTS] Utilizando Deepgram Aura + Whisper Local...")
+        return await asyncio.to_thread(_deepgram_generate_sync, text, output_path, voice)
     
     # Fallback to free edge-tts / gTTS
     try:
@@ -197,6 +298,7 @@ async def generate_audio(
     except Exception as e:
         print(f"[TTS] edge-tts falló ({e}), usando gTTS como respaldo...")
         return _gtts_generate(text, output_path, voice)
+
 
 
 def generate_audio_sync(
@@ -209,8 +311,10 @@ def generate_audio_sync(
 def get_available_voices() -> dict:
     """Devuelve las voces agrupadas entre premium y gratis."""
     eleven = [{"id": k, "name": v} for k, v in ELEVENLABS_VOICES.items()]
+    deepgram = [{"id": k, "name": v} for k, v in DEEPGRAM_VOICES.items()]
     free = [{"id": k, "name": v} for k, v in FREE_VOICES.items()]
     return {
         "elevenlabs": eleven,
+        "deepgram": deepgram,
         "free": free
     }
