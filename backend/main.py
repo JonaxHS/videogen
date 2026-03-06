@@ -6,6 +6,7 @@ import os
 import uuid
 import asyncio
 import requests
+import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -732,7 +733,10 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             video_skip_seconds = 0.0
             if manual_url:
                 manual_provider = infer_provider_from_url(manual_url)
-                video_path = download_video_from_url(manual_url, provider_hint=manual_provider)
+                source_video_path = download_video_from_url(manual_url, provider_hint=manual_provider)
+                video_path = str(job_dir / f"video_{i:03d}.mp4")
+                if source_video_path != video_path:
+                    shutil.copy2(source_video_path, video_path)
                 video_provider = manual_provider
                 selected_video_url = manual_url
             else:
@@ -745,7 +749,10 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                     min_duration=max(3, int(audio_duration)),
                     exclude_urls=used_video_urls,
                 )
-                video_path = auto_video_result["path"]
+                source_video_path = auto_video_result["path"]
+                video_path = str(job_dir / f"video_{i:03d}.mp4")
+                if source_video_path != video_path:
+                    shutil.copy2(source_video_path, video_path)
                 video_provider = auto_video_result.get("provider", "manual")
                 selected_video_url = auto_video_result.get("url", "")
                 video_skip_seconds = float(auto_video_result.get("skip_seconds", 0.0) or 0.0)
