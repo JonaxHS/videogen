@@ -283,14 +283,34 @@ def download_video_from_url(video_url: str, provider_hint: str = "manual") -> st
     if cached_path.exists():
         return str(cached_path)
 
-    response = requests.get(video_url, stream=True, timeout=60)
-    response.raise_for_status()
+    try:
+        # Add headers to avoid blocking by CDNs
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(video_url, stream=True, timeout=60, headers=headers)
+        response.raise_for_status()
 
-    with open(cached_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+        with open(cached_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
 
-    return str(cached_path)
+        file_size = cached_path.stat().st_size
+        if file_size < 1000:  # Less than 1KB is likely an error page
+            cached_path.unlink()
+            raise RuntimeError(f"Downloaded file too small ({file_size} bytes), likely error page")
+
+        return str(cached_path)
+    except Exception as e:
+        # Clean up failed download
+        if cached_path.exists():
+            try:
+                cached_path.unlink()
+            except Exception:
+                pass
+        print(f"[VideoSearch] Failed to download video from {provider_hint}: {e}")
+        raise
 
 
 def _search_pexels(
@@ -435,8 +455,13 @@ def _search_pixabay_candidates(
 
     for hit in hits:
         duration = int(hit.get("duration", 0) or 0)
+        if duration < min_duration:
+            continue
+            
         videos = hit.get("videos", {})
         variants = []
+        
+        # Prefer larger video sizes in order
         for key in ("large", "medium", "small", "tiny"):
             variant = videos.get(key)
             if variant and variant.get("url"):
@@ -445,13 +470,15 @@ def _search_pixabay_candidates(
         if not variants:
             continue
 
+        # Sort by resolution
         variants.sort(
             key=lambda v: (int(v.get("width", 0) or 0) * int(v.get("height", 0) or 0)),
             reverse=True,
         )
         selected = variants[0]
         selected_url = selected.get("url")
-        if not selected_url:
+        
+        if not selected_url or not selected_url.startswith("http"):
             continue
 
         metadata_text = " ".join([
@@ -465,7 +492,10 @@ def _search_pixabay_candidates(
         resolution_score = min(25.0, (int(selected.get("width", 0) or 0) * int(selected.get("height", 0) or 0)) / 150000.0)
         total_score = relevance * 12.0 + duration_score + resolution_score
 
-        thumbnail = f"https://i.vimeocdn.com/video/{hit.get('picture_id', '')}_640x360.jpg" if hit.get("picture_id") else ""
+        # Use Pixabay's preview image if available
+        thumbnail = hit.get("previewURL", "")
+        if not thumbnail:
+            thumbnail = f"https://i.vimeocdn.com/video/{hit.get('picture_id', '')}_640x360.jpg"
 
         candidates.append({
             "provider": "pixabay",

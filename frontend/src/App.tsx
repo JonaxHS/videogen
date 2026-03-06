@@ -106,11 +106,20 @@ function VideoReplacementModal({
     const [searchLoading, setSearchLoading] = useState(false)
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+    // Reset preview URL when segment changes
     useEffect(() => {
-        if (options.length > 0 && !previewUrl) {
+        if (isOpen && segment) {
+            setPreviewUrl('')
+            setSearchQuery('')
+            setSearchResults([])
+        }
+    }, [segment?.id, isOpen])
+
+    useEffect(() => {
+        if (options.length > 0 && !previewUrl && isOpen) {
             setPreviewUrl(options[0].url)
         }
-    }, [options, previewUrl])
+    }, [options, previewUrl, isOpen])
 
     // Debounced search handler
     const handleSearch = (query: string) => {
