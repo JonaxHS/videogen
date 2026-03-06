@@ -727,7 +727,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             # 3. Download stock video
             job["message"] = f"Segmento {i + 1}/{total}: buscando video..."
             manual_url = selected_videos.get(str(seg.get("id", i)), "").strip()
-            selected_video: dict[str, Any] = {"skip_seconds": 0.0}
+            video_skip_seconds = 0.0
             if manual_url:
                 manual_provider = infer_provider_from_url(manual_url)
                 video_path = download_video_from_url(manual_url, provider_hint=manual_provider)
@@ -746,6 +746,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 video_path = selected_video["path"]
                 video_provider = selected_video.get("provider", "manual")
                 selected_video_url = selected_video.get("url", "")
+                video_skip_seconds = float(selected_video.get("skip_seconds", 0.0) or 0.0)
 
             # Track selected clip to avoid repetition in next segments
             used_video_urls.add(Path(video_path).name)
@@ -759,7 +760,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 "video_path": video_path,
                 "video_provider": video_provider,
                 "video_source_url": selected_video_url,
-                "video_skip_seconds": selected_video.get("skip_seconds", 0.0),
+                "video_skip_seconds": video_skip_seconds,
                 "audio_duration": audio_duration,
             })
 
