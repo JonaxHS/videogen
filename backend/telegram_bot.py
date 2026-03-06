@@ -368,7 +368,7 @@ def parse_user_script(text: str) -> Optional[str]:
     if text.startswith("/"):
         return None
 
-    return text.strip()
+    return None
 
 
 def handle_update(update: dict) -> None:
@@ -422,7 +422,7 @@ def handle_update(update: dict) -> None:
     text = (message.get("text") or "").strip()
     message_id = message.get("message_id")
 
-    if text.startswith("/start") or text.startswith("/help"):
+    if text.startswith("/start") or text.startswith("/help") or text.startswith("/commands"):
         send_message(
             chat_id,
             "Hola 👋\n\n"
@@ -430,13 +430,15 @@ def handle_update(update: dict) -> None:
             "1) Generar guiones con Qwen\n"
             "2) Conversar contigo\n"
             "3) Generar videos\n\n"
-            "También puedes usar:\n"
+            "Comandos disponibles:\n"
             "`/script tema | tono | segundos` para crear un guion\n"
             "`/chat tu pregunta` para conversar con Qwen\n"
             "`/video tu guion aquí` para generar video\n"
             "`/generate tu guion aquí` (alias de /video)\n"
+            "`/commands` ver esta lista\n"
             "`/ping` para verificar el bot\n"
-            "`/id` para ver tu chat id",
+            "`/id` para ver tu chat id\n\n"
+            "Tip: si me escribes sin comando, te responderé en modo conversación 🤖",
             reply_to_message_id=message_id,
         )
         return
@@ -503,11 +505,22 @@ def handle_update(update: dict) -> None:
         return
 
     script = parse_user_script(text)
-    if not script:
-        send_message(chat_id, "Mándame un texto de guion o usa /generate <guion>.", reply_to_message_id=message_id)
+    if script:
+        handle_script(chat_id=chat_id, script=script, message_id=message_id)
         return
 
-    handle_script(chat_id=chat_id, script=script, message_id=message_id)
+    # Default behavior: free conversation with Qwen
+    try:
+        send_chat_action(chat_id, "typing")
+        answer = ollama_chat(chat_id, text)
+        send_message(chat_id, f"🤖 {answer}", reply_to_message_id=message_id)
+    except Exception as exc:
+        send_message(
+            chat_id,
+            "❌ No pude responder en modo conversación. "
+            f"Error: {exc}\nUsa /commands para ver opciones.",
+            reply_to_message_id=message_id,
+        )
 
 
 def run_bot() -> None:
