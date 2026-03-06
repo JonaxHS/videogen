@@ -290,6 +290,7 @@ def search_video_options(
         else fallback_keywords
     )
     query_candidates = _build_query_candidates(keywords, effective_context, effective_fallback)
+    translated_terms_for_nasa = _translate_terms(_extract_terms(f"{keywords} {context_text}"))
 
     if global_search:
         extra_global = [
@@ -308,8 +309,46 @@ def search_video_options(
     nasa_per_page = 14 if global_search else 8
 
     all_candidates = []
+    nasa_query_candidates = []
+
+    for candidate in query_candidates:
+        if candidate and candidate not in nasa_query_candidates:
+            nasa_query_candidates.append(candidate)
+
+    if translated_terms_for_nasa:
+        for size in (2, 3, 4, 6):
+            phrase = " ".join(translated_terms_for_nasa[:size]).strip()
+            if phrase and phrase not in nasa_query_candidates:
+                nasa_query_candidates.append(phrase)
+
+    astronomy_defaults = [
+        "nasa space telescope",
+        "galaxy nebula stars",
+        "moon mars earth orbit",
+        "astronaut spacewalk iss",
+        "cosmos universe deep space",
+    ]
+    for phrase in astronomy_defaults:
+        if phrase not in nasa_query_candidates:
+            nasa_query_candidates.append(phrase)
+
+    # Query NASA first to maximize astronomy relevance.
+    for query_index, query in enumerate(nasa_query_candidates):
+        if query_index >= (8 if global_search else 5):
+            break
+        all_candidates.extend(
+            _search_nasa_candidates(
+                query,
+                min_duration,
+                per_page=nasa_per_page,
+                page=page,
+            )
+        )
+
     for query_index, query in enumerate(query_candidates):
         for provider_name, provider_key in providers:
+            if provider_name == "nasa":
+                continue
             if provider_name == "pexels":
                 all_candidates.extend(
                     _search_pexels_candidates(
@@ -331,14 +370,12 @@ def search_video_options(
                     )
                 )
             else:
-                # NASA assets endpoint can be expensive; cap to top query candidates.
-                if query_index >= (4 if global_search else 3):
-                    continue
                 all_candidates.extend(
-                    _search_nasa_candidates(
+                    _search_pixabay_candidates(
                         query,
+                        provider_key,
                         min_duration,
-                        per_page=nasa_per_page,
+                        per_page=pixabay_per_page,
                         page=page,
                     )
                 )
@@ -362,7 +399,14 @@ def search_video_options(
         if prev is None or candidate.get("score", 0) > prev.get("score", 0):
             best_by_url[url] = candidate
 
-    ranked = sorted(best_by_url.values(), key=lambda c: c.get("score", 0), reverse=True)
+    ranked = sorted(
+        best_by_url.values(),
+        key=lambda c: (
+            1 if c.get("provider") == "nasa" else 0,
+            c.get("score", 0),
+        ),
+        reverse=True,
+    )
     limited = ranked[: max(1, limit)]
 
     # Ensure NASA appears in global searches when available (useful for astronomy-focused reels)
@@ -373,6 +417,17 @@ def search_video_options(
             if nasa_candidates:
                 # Replace the last item with the best NASA candidate for provider diversity
                 limited[-1] = nasa_candidates[0]
+
+    # Last fallback: if NASA still didn't yield anything and result set is empty, run a broad NASA query.
+    if not limited:
+        fallback_nasa = _search_nasa_candidates(
+            "nasa astronomy deep space",
+            min_duration=min_duration,
+            per_page=max(6, nasa_per_page),
+            page=1,
+        )
+        if fallback_nasa:
+            return fallback_nasa[: max(1, limit)]
 
     return limited
 
