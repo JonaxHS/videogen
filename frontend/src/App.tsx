@@ -287,7 +287,7 @@ function VideoReplacementModal({
                                         transition: 'all 0.2s',
                                     }}
                                 >
-                                    {opt.thumbnail && (
+                                    {opt.thumbnail && opt.thumbnail.trim() && opt.thumbnail.startsWith('http') && (
                                         <img
                                             src={opt.thumbnail}
                                             alt="thumb"

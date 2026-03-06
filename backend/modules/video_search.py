@@ -492,10 +492,8 @@ def _search_pixabay_candidates(
         resolution_score = min(25.0, (int(selected.get("width", 0) or 0) * int(selected.get("height", 0) or 0)) / 150000.0)
         total_score = relevance * 12.0 + duration_score + resolution_score
 
-        # Use Pixabay's preview image if available
+        # Use Pixabay's previewURL for thumbnail (it's a valid image URL)
         thumbnail = hit.get("previewURL", "")
-        if not thumbnail:
-            thumbnail = f"https://i.vimeocdn.com/video/{hit.get('picture_id', '')}_640x360.jpg"
 
         candidates.append({
             "provider": "pixabay",
