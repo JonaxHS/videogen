@@ -6,6 +6,7 @@ Uses local semantic embeddings for intelligent video matching.
 import hashlib
 import re
 import os
+import json
 import requests
 from pathlib import Path
 from typing import Optional
@@ -84,11 +85,22 @@ _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 _ESA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # Auto-cleanup configuration (strict defaults for VPS stability)
 MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))  # Default 800MB
 MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))  # Default 1 day
 MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))  # If >0, overrides days
 CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_VIDEO_RERANK_MODEL = os.getenv("OLLAMA_VIDEO_RERANK_MODEL", "qwen2.5:7b-instruct")
+ENABLE_QWEN_VIDEO_RERANK = _bool_env("ENABLE_QWEN_VIDEO_RERANK", True)
+QWEN_VIDEO_RERANK_TOP_K = int(os.getenv("QWEN_VIDEO_RERANK_TOP_K", "8"))
 _LAST_CLEANUP_TIME = datetime.now()
 
 
@@ -609,6 +621,16 @@ def search_video_options(
         ),
         reverse=True,
     )
+
+    # Optional Qwen reranker: improve final pick quality for low-limit selections
+    # (e.g. automatic segment generation where limit=1).
+    if ENABLE_QWEN_VIDEO_RERANK and len(ranked) > 1 and limit <= 3:
+        query_text = (context_text or keywords or "").strip()
+        top_k = max(2, min(QWEN_VIDEO_RERANK_TOP_K, len(ranked)))
+        reranked = _qwen_rerank_candidates(query_text, ranked, top_k=top_k)
+        if reranked:
+            ranked = reranked
+
     limited = ranked[: max(1, limit)]
 
     # Ensure NASA/ESA appears in global searches when available (useful for astronomy-focused reels)
@@ -1231,4 +1253,98 @@ def _text_relevance_score(query_terms: list[str], metadata_text: str) -> float:
 
     hits = sum(1 for term in query_terms if term in metadata_terms)
     return hits / max(1, len(query_terms))
+
+
+def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_k: int = 8) -> list[dict]:
+    """
+    Ask Qwen (via Ollama) to pick the best candidate among top_k results.
+    Returns reordered full list with selected candidate moved to first position.
+    Falls back silently to original ranking on any error.
+    """
+    if not ranked_candidates or top_k < 2:
+        return ranked_candidates
+
+    pool = ranked_candidates[:top_k]
+    lines = []
+    for i, candidate in enumerate(pool, start=1):
+        provider = str(candidate.get("provider", "manual"))
+        duration = candidate.get("duration", "?")
+        score = round(float(candidate.get("score", 0.0)), 2)
+        url = str(candidate.get("url", ""))
+        lines.append(f"{i}) provider={provider} duration={duration}s score={score} url={url}")
+
+    user_prompt = (
+        "Selecciona el video que mejor encaja con el guion o segmento.\n"
+        f"Consulta: {query_text or 'video relevante y coherente'}\n"
+        "Opciones:\n"
+        f"{'\n'.join(lines)}\n\n"
+        "Responde SOLO con el número de la mejor opción (ejemplo: 3)."
+    )
+
+    try:
+        text = _ollama_generate_text(user_prompt)
+        if not text:
+            return ranked_candidates
+
+        match = re.search(r"\b(\d{1,2})\b", text)
+        if not match:
+            return ranked_candidates
+
+        picked = int(match.group(1))
+        if picked < 1 or picked > len(pool):
+            return ranked_candidates
+
+        chosen = pool[picked - 1]
+        reordered_top = [chosen] + [c for idx, c in enumerate(pool) if idx != (picked - 1)]
+        return reordered_top + ranked_candidates[top_k:]
+    except Exception as e:
+        print(f"[VideoSearch] Qwen rerank skipped: {e}")
+        return ranked_candidates
+
+
+def _ollama_generate_text(user_prompt: str) -> str:
+    base_url = OLLAMA_BASE_URL.rstrip("/")
+
+    chat_payload = {
+        "model": OLLAMA_VIDEO_RERANK_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Eres un selector experto de metraje de stock para videos cortos.",
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+            },
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.2,
+            "top_p": 0.9,
+        },
+    }
+
+    generate_payload = {
+        "model": OLLAMA_VIDEO_RERANK_MODEL,
+        "prompt": (
+            "Eres un selector experto de metraje de stock para videos cortos.\n"
+            f"{user_prompt}"
+        ),
+        "stream": False,
+        "options": {
+            "temperature": 0.2,
+            "top_p": 0.9,
+        },
+    }
+
+    response = requests.post(f"{base_url}/api/chat", json=chat_payload, timeout=25)
+    if response.status_code == 404:
+        response = requests.post(f"{base_url}/api/generate", json=generate_payload, timeout=25)
+
+    response.raise_for_status()
+    payload = response.json() or {}
+    message_text = ((payload.get("message") or {}).get("content") or "").strip()
+    if message_text:
+        return message_text
+    return str(payload.get("response", "")).strip()
 
