@@ -18,6 +18,7 @@ from dotenv import load_dotenv, dotenv_values
 
 from modules.script_parser import parse_script
 from modules.tts import generate_audio_sync, get_available_voices, DEFAULT_VOICE
+from modules import video_search as video_search_module
 from modules.video_search import (
     search_and_download_video,
     search_and_download_video_info,
@@ -40,6 +41,10 @@ TELEGRAM_DEFAULT_RATE = os.getenv("TELEGRAM_DEFAULT_RATE", "+0%")
 TELEGRAM_DEFAULT_PITCH = os.getenv("TELEGRAM_DEFAULT_PITCH", "+0Hz")
 TELEGRAM_DEFAULT_SHOW_SUBTITLES = os.getenv("TELEGRAM_DEFAULT_SHOW_SUBTITLES", "true").lower() != "false"
 TELEGRAM_DEFAULT_SUBTITLE_STYLE = os.getenv("TELEGRAM_DEFAULT_SUBTITLE_STYLE", "classic")
+MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))
+MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))
+MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))
+CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
@@ -116,6 +121,13 @@ class PreferencesRequest(BaseModel):
     subtitle_style: str = "classic"
 
 
+class CacheSettingsRequest(BaseModel):
+    max_cache_size_mb: int = 800
+    max_file_age_days: int = 1
+    max_file_age_hours: int = 12
+    cleanup_interval_seconds: int = 30
+
+
 class ParseRequest(BaseModel):
     script: str
 
@@ -170,6 +182,47 @@ def get_preferences():
         "pitch": TELEGRAM_DEFAULT_PITCH,
         "show_subtitles": TELEGRAM_DEFAULT_SHOW_SUBTITLES,
         "subtitle_style": TELEGRAM_DEFAULT_SUBTITLE_STYLE,
+    }
+
+
+@app.get("/api/cache-settings")
+def get_cache_settings():
+    return {
+        "max_cache_size_mb": MAX_CACHE_SIZE_MB,
+        "max_file_age_days": MAX_FILE_AGE_DAYS,
+        "max_file_age_hours": MAX_FILE_AGE_HOURS,
+        "cleanup_interval_seconds": CACHE_CLEANUP_INTERVAL_SECONDS,
+    }
+
+
+@app.post("/api/cache-settings")
+def save_cache_settings(req: CacheSettingsRequest):
+    max_cache_size_mb = max(200, int(req.max_cache_size_mb))
+    max_file_age_days = max(0, int(req.max_file_age_days))
+    max_file_age_hours = max(0, int(req.max_file_age_hours))
+    cleanup_interval_seconds = max(10, int(req.cleanup_interval_seconds))
+
+    if max_file_age_days == 0 and max_file_age_hours == 0:
+        raise HTTPException(status_code=400, detail="Debes definir antigüedad por días u horas")
+
+    _write_env({
+        "MAX_CACHE_SIZE_MB": str(max_cache_size_mb),
+        "MAX_FILE_AGE_DAYS": str(max_file_age_days),
+        "MAX_FILE_AGE_HOURS": str(max_file_age_hours),
+        "CACHE_CLEANUP_INTERVAL_SECONDS": str(cleanup_interval_seconds),
+    })
+    _reload_env_globals()
+    _apply_cache_settings_to_video_search(force_cleanup=True)
+
+    return {
+        "success": True,
+        "message": "Parámetros de limpieza automática guardados",
+        "settings": {
+            "max_cache_size_mb": MAX_CACHE_SIZE_MB,
+            "max_file_age_days": MAX_FILE_AGE_DAYS,
+            "max_file_age_hours": MAX_FILE_AGE_HOURS,
+            "cleanup_interval_seconds": CACHE_CLEANUP_INTERVAL_SECONDS,
+        },
     }
 
 
@@ -257,10 +310,23 @@ def _write_env(updates: dict):
             f.write(f"{k}={v}\n")
 
 
+def _apply_cache_settings_to_video_search(force_cleanup: bool = False):
+    video_search_module.MAX_CACHE_SIZE_MB = MAX_CACHE_SIZE_MB
+    video_search_module.MAX_FILE_AGE_DAYS = MAX_FILE_AGE_DAYS
+    video_search_module.MAX_FILE_AGE_HOURS = MAX_FILE_AGE_HOURS
+    video_search_module.CACHE_CLEANUP_INTERVAL_SECONDS = CACHE_CLEANUP_INTERVAL_SECONDS
+    if force_cleanup:
+        try:
+            video_search_module._cleanup_cache_if_needed(force=True)
+        except Exception:
+            pass
+
+
 def _reload_env_globals():
     global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, TELEGRAM_BOT_TOKEN
     global TELEGRAM_DEFAULT_VOICE, TELEGRAM_DEFAULT_RATE, TELEGRAM_DEFAULT_PITCH
     global TELEGRAM_DEFAULT_SHOW_SUBTITLES, TELEGRAM_DEFAULT_SUBTITLE_STYLE
+    global MAX_CACHE_SIZE_MB, MAX_FILE_AGE_DAYS, MAX_FILE_AGE_HOURS, CACHE_CLEANUP_INTERVAL_SECONDS
 
     load_dotenv(dotenv_path=ENV_FILE, override=True)
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
@@ -273,20 +339,26 @@ def _reload_env_globals():
     TELEGRAM_DEFAULT_PITCH = os.getenv("TELEGRAM_DEFAULT_PITCH", "+0Hz")
     TELEGRAM_DEFAULT_SHOW_SUBTITLES = os.getenv("TELEGRAM_DEFAULT_SHOW_SUBTITLES", "true").lower() != "false"
     TELEGRAM_DEFAULT_SUBTITLE_STYLE = os.getenv("TELEGRAM_DEFAULT_SUBTITLE_STYLE", "classic")
+    MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))
+    MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))
+    MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))
+    CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
+    _apply_cache_settings_to_video_search(force_cleanup=False)
 
 
 @app.post("/api/cleanup")
 def cleanup_cache():
     """Clean up old cache files."""
     try:
-        from modules.video_search import _cleanup_old_files, CACHE_DIR
-        import shutil
+        from modules.video_search import _cleanup_old_files, _cleanup_cache_if_needed, CACHE_DIR
         
         # Get cache size before
         cache_size_before = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0
         
-        # Clean up old files (keep only 1GB)
-        _cleanup_old_files(target_mb=1000)
+        # Clean up old files using configured target
+        target_mb = max(200, float(MAX_CACHE_SIZE_MB) * 0.8)
+        _cleanup_old_files(target_mb=target_mb)
+        _cleanup_cache_if_needed(force=True)
         
         # Get cache size after
         cache_size_after = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0

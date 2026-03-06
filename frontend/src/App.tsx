@@ -54,6 +54,13 @@ interface PreferencesPayload {
     subtitle_style: string
 }
 
+interface CacheSettings {
+    max_cache_size_mb: number
+    max_file_age_days: number
+    max_file_age_hours: number
+    cleanup_interval_seconds: number
+}
+
 interface ParseResponse {
     segments: Segment[]
 }
@@ -816,6 +823,12 @@ function ConfigPanel({
     const [loading, setLoading] = useState(false)
     const [cleanupLoading, setCleanupLoading] = useState(false)
     const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
+    const [cacheSettingsLoading, setCacheSettingsLoading] = useState(false)
+    const [cacheSettingsMessage, setCacheSettingsMessage] = useState<string | null>(null)
+    const [maxCacheSizeMb, setMaxCacheSizeMb] = useState(800)
+    const [maxFileAgeDays, setMaxFileAgeDays] = useState(1)
+    const [maxFileAgeHours, setMaxFileAgeHours] = useState(12)
+    const [cleanupIntervalSeconds, setCleanupIntervalSeconds] = useState(30)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
 
@@ -824,6 +837,24 @@ function ConfigPanel({
     const hasElevenlabs = !!existingConfig?.elevenlabs_key_preview
     const hasDeepgram = !!existingConfig?.deepgram_key_preview
     const hasTelegramBot = !!existingConfig?.telegram_bot_token_preview
+
+    useEffect(() => {
+        let cancelled = false
+        apiGet<CacheSettings>('/cache-settings')
+            .then(settings => {
+                if (cancelled) return
+                setMaxCacheSizeMb(settings.max_cache_size_mb || 800)
+                setMaxFileAgeDays(settings.max_file_age_days || 0)
+                setMaxFileAgeHours(settings.max_file_age_hours || 0)
+                setCleanupIntervalSeconds(settings.cleanup_interval_seconds || 30)
+            })
+            .catch(() => {
+                // Keep defaults if endpoint is temporarily unavailable
+            })
+        return () => {
+            cancelled = true
+        }
+    }, [])
 
     const handleSave = async () => {
         setError(null)
@@ -859,6 +890,25 @@ function ConfigPanel({
             setCleanupMessage(`❌ Error: ${e instanceof Error ? e.message : 'Error desconocido'}`)
         } finally {
             setCleanupLoading(false)
+        }
+    }
+
+    const handleSaveCacheSettings = async () => {
+        setCacheSettingsLoading(true)
+        setCacheSettingsMessage(null)
+        try {
+            const res = await apiPost<any>('/cache-settings', {
+                max_cache_size_mb: maxCacheSizeMb,
+                max_file_age_days: maxFileAgeDays,
+                max_file_age_hours: maxFileAgeHours,
+                cleanup_interval_seconds: cleanupIntervalSeconds,
+            })
+            setCacheSettingsMessage(`✅ ${res.message}`)
+            setTimeout(() => setCacheSettingsMessage(null), 4000)
+        } catch (e: unknown) {
+            setCacheSettingsMessage(`❌ Error: ${e instanceof Error ? e.message : 'Error desconocido'}`)
+        } finally {
+            setCacheSettingsLoading(false)
         }
     }
 
@@ -958,6 +1008,90 @@ function ConfigPanel({
 
                     <div className="config-section">
                         <h3>🧹 Mantenimiento</h3>
+                        <div className="config-field">
+                            <label>Limpieza Automática de Cache</label>
+                            <p className="config-hint">
+                                Ajusta cuánto cache conservar, cada cuánto revisar y cuándo expirar archivos.
+                            </p>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Máx. cache (MB)</label>
+                                    <input
+                                        type="number"
+                                        min={200}
+                                        value={maxCacheSizeMb}
+                                        onChange={e => setMaxCacheSizeMb(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Intervalo revisión (s)</label>
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        value={cleanupIntervalSeconds}
+                                        onChange={e => setCleanupIntervalSeconds(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Expirar por horas</label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        value={maxFileAgeHours}
+                                        onChange={e => setMaxFileAgeHours(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Expirar por días (fallback)</label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        value={maxFileAgeDays}
+                                        onChange={e => setMaxFileAgeDays(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleSaveCacheSettings}
+                                disabled={cacheSettingsLoading}
+                                style={{
+                                    width: '100%',
+                                    marginTop: 10,
+                                    background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    color: 'white',
+                                    padding: '10px 12px',
+                                    cursor: cacheSettingsLoading ? 'not-allowed' : 'pointer',
+                                    opacity: cacheSettingsLoading ? 0.7 : 1,
+                                    fontWeight: 500,
+                                }}
+                            >
+                                {cacheSettingsLoading ? '⏳ Guardando limpieza automática...' : '💾 Guardar limpieza automática'}
+                            </button>
+
+                            {cacheSettingsMessage && (
+                                <div style={{
+                                    marginTop: 12,
+                                    padding: 10,
+                                    borderRadius: 6,
+                                    background: cacheSettingsMessage.startsWith('✅') ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                    border: `1px solid ${cacheSettingsMessage.startsWith('✅') ? '#22c55e' : '#ef4444'}`,
+                                    fontSize: 13,
+                                    color: 'var(--text)',
+                                    whiteSpace: 'pre-wrap',
+                                }}>
+                                    {cacheSettingsMessage}
+                                </div>
+                            )}
+                        </div>
+
                         <div className="config-field">
                             <label>Limpiar Cache de Videos</label>
                             <p className="config-hint">
