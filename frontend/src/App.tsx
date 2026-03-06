@@ -150,6 +150,7 @@ function VideoReplacementModal({
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
                     global_search: true,
+                    prefer_nasa: true,
                     page: 1,
                     exclude_urls: [],
                 })
@@ -199,6 +200,7 @@ function VideoReplacementModal({
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
                     global_search: true,
+                    prefer_nasa: true,
                     page: 1,
                     exclude_urls: [],
                 })
@@ -224,6 +226,7 @@ function VideoReplacementModal({
                 min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                 limit: 30,
                 global_search: true,
+                prefer_nasa: true,
                 page: nextPage,
                 exclude_urls: [],
             })
@@ -1064,33 +1067,41 @@ export default function App() {
                 setSelectedVideos({})
                 setPreviewingSeg(null)
 
-                // Load videos for all segments in parallel
+                // Load videos segment by segment to avoid repeating the same top clip
                 setLoadingVideosBySeg(
                     newSegs.reduce((acc, s) => ({ ...acc, [s.id]: true }), {})
                 )
 
                 const videosBySegId: Record<number, VideoOption[]> = {}
-                await Promise.all(
-                    newSegs.map(seg =>
-                        apiPost<VideoOptionsResponse>('/video-options', {
+                const usedPreviewUrls = new Set<string>(Object.values(selectedVideos || {}))
+
+                for (const seg of newSegs) {
+                    try {
+                        const res = await apiPost<VideoOptionsResponse>('/video-options', {
                             keywords: seg.keywords,
                             context_text: seg.text,
                             min_duration: Math.max(3, Math.round(seg.estimated_duration)),
-                            limit: 8,
-                            exclude_urls: Object.values(selectedVideos || {}),
+                            limit: 12,
+                            global_search: true,
+                            prefer_nasa: true,
+                            exclude_urls: Array.from(usedPreviewUrls),
                         })
-                            .then(res => {
-                                videosBySegId[seg.id] = res.options || []
-                            })
-                            .catch(() => {
-                                videosBySegId[seg.id] = []
-                            })
-                    )
-                )
+
+                        const options = res.options || []
+                        videosBySegId[seg.id] = options
+
+                        const topUrl = options[0]?.url
+                        if (topUrl) {
+                            usedPreviewUrls.add(topUrl)
+                        }
+                    } catch {
+                        videosBySegId[seg.id] = []
+                    } finally {
+                        setLoadingVideosBySeg(prev => ({ ...prev, [seg.id]: false }))
+                    }
+                }
+
                 setVideoOptionsBySeg(videosBySegId)
-                setLoadingVideosBySeg(
-                    newSegs.reduce((acc, s) => ({ ...acc, [s.id]: false }), {})
-                )
             } catch {
                 // keep previous segments on transient parse errors
             }

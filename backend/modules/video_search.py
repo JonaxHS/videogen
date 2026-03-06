@@ -268,6 +268,7 @@ def search_video_options(
     fallback_keywords: str = "nature landscape",
     limit: int = 8,
     global_search: bool = False,
+    prefer_nasa: bool = False,
     page: int = 1,
     exclude_urls: set[str] | None = None,
 ) -> list[dict]:
@@ -306,7 +307,7 @@ def search_video_options(
 
     pexels_per_page = 40 if global_search else 20
     pixabay_per_page = 50 if global_search else 25
-    nasa_per_page = 14 if global_search else 8
+    nasa_per_page = 20 if (global_search or prefer_nasa) else 10
 
     all_candidates = []
     nasa_query_candidates = []
@@ -334,7 +335,7 @@ def search_video_options(
 
     # Query NASA first to maximize astronomy relevance.
     for query_index, query in enumerate(nasa_query_candidates):
-        if query_index >= (8 if global_search else 5):
+        if query_index >= (12 if (global_search or prefer_nasa) else 5):
             break
         all_candidates.extend(
             _search_nasa_candidates(
@@ -402,7 +403,7 @@ def search_video_options(
     ranked = sorted(
         best_by_url.values(),
         key=lambda c: (
-            1 if c.get("provider") == "nasa" else 0,
+            2 if (prefer_nasa and c.get("provider") == "nasa") else (1 if c.get("provider") == "nasa" else 0),
             c.get("score", 0),
         ),
         reverse=True,
@@ -682,7 +683,12 @@ def _search_nasa_candidates(
     }
 
     try:
-        resp = requests.get(NASA_SEARCH_API, params=params, timeout=20)
+        resp = requests.get(
+            NASA_SEARCH_API,
+            params=params,
+            timeout=20,
+            headers={"User-Agent": "VideoGen/1.0"},
+        )
         resp.raise_for_status()
         payload = resp.json() or {}
     except Exception as e:
@@ -753,7 +759,7 @@ def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
 
     asset_endpoint = f"https://images-api.nasa.gov/asset/{nasa_id}"
     try:
-        resp = requests.get(asset_endpoint, timeout=20)
+        resp = requests.get(asset_endpoint, timeout=20, headers={"User-Agent": "VideoGen/1.0"})
         resp.raise_for_status()
         payload = resp.json() or {}
     except Exception as e:
@@ -765,9 +771,10 @@ def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
         return None
 
     urls = []
+    allowed_ext = (".mp4", ".mov", ".m4v", ".webm")
     for it in items:
         href = str((it or {}).get("href", ""))
-        if href.startswith("http") and ".mp4" in href.lower():
+        if href.startswith("http") and href.lower().split("?")[0].endswith(allowed_ext):
             urls.append(href)
 
     if not urls:

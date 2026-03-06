@@ -119,6 +119,7 @@ class VideoOptionsRequest(BaseModel):
     min_duration: int = 5
     limit: int = 8
     global_search: bool = False
+    prefer_nasa: bool = False
     page: int = 1
     exclude_urls: list[str] = Field(default_factory=list)
 
@@ -353,6 +354,7 @@ def video_options(req: VideoOptionsRequest):
         min_duration=max(3, int(req.min_duration)),
         limit=max(1, min(50, int(req.limit))),
         global_search=bool(req.global_search),
+        prefer_nasa=bool(req.prefer_nasa),
         page=max(1, int(req.page)),
         exclude_urls=set(req.exclude_urls or []),
     )
@@ -455,6 +457,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 manual_provider = infer_provider_from_url(manual_url)
                 video_path = download_video_from_url(manual_url, provider_hint=manual_provider)
                 video_provider = manual_provider
+                selected_video_url = manual_url
             else:
                 selected_video = search_and_download_video_info(
                     keywords=seg["keywords"],
@@ -467,10 +470,13 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 )
                 video_path = selected_video["path"]
                 video_provider = selected_video.get("provider", "manual")
+                selected_video_url = selected_video.get("url", "")
 
             # Track selected clip to avoid repetition in next segments
             used_video_urls.add(Path(video_path).name)
             used_video_urls.add(Path(video_path).stem)
+            if selected_video_url:
+                used_video_urls.add(selected_video_url)
 
             composed_segments.append({
                 **seg,
