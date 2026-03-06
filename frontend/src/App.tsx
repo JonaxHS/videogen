@@ -112,6 +112,7 @@ function VideoReplacementModal({
     const [searchQuery, setSearchQuery] = useState<string>('')
     const [searchResults, setSearchResults] = useState<VideoOption[]>([])
     const [defaultGlobalOptions, setDefaultGlobalOptions] = useState<VideoOption[]>([])
+    const [searchPage, setSearchPage] = useState(1)
     const [searchLoading, setSearchLoading] = useState(false)
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -121,6 +122,7 @@ function VideoReplacementModal({
             setPreviewUrl('')
             setSearchQuery('')
             setSearchResults([])
+            setSearchPage(1)
         }
     }, [segment?.id, isOpen, selectedUrl])
 
@@ -148,6 +150,7 @@ function VideoReplacementModal({
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
                     global_search: true,
+                    page: 1,
                     exclude_urls: [],
                 })
                 if (!cancelled) {
@@ -174,8 +177,9 @@ function VideoReplacementModal({
     }, [isOpen, segment])
 
     // Debounced search handler
-    const handleSearch = (query: string) => {
+    const handleSearchInput = (query: string) => {
         setSearchQuery(query)
+        setSearchPage(1)
         
         if (searchTimeoutRef.current) {
             clearTimeout(searchTimeoutRef.current)
@@ -195,6 +199,7 @@ function VideoReplacementModal({
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
                     global_search: true,
+                    page: 1,
                     exclude_urls: [],
                 })
                 setSearchResults(res.options || [])
@@ -204,6 +209,47 @@ function VideoReplacementModal({
                 setSearchLoading(false)
             }
         }, 500) // 500ms debounce
+    }
+
+    const runSearch = async (append: boolean) => {
+        const query = searchQuery.trim()
+        if (!query) return
+
+        const nextPage = append ? searchPage + 1 : 1
+        setSearchLoading(true)
+        try {
+            const res = await apiPost<VideoOptionsResponse>('/video-options', {
+                keywords: query,
+                context_text: '',
+                min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
+                limit: 30,
+                global_search: true,
+                page: nextPage,
+                exclude_urls: [],
+            })
+            const incoming = res.options || []
+            if (append) {
+                setSearchResults(prev => {
+                    const existing = new Set(prev.map(o => o.url))
+                    const merged = [...prev]
+                    for (const item of incoming) {
+                        if (!existing.has(item.url)) {
+                            merged.push(item)
+                        }
+                    }
+                    return merged
+                })
+            } else {
+                setSearchResults(incoming)
+            }
+            setSearchPage(nextPage)
+        } catch {
+            if (!append) {
+                setSearchResults([])
+            }
+        } finally {
+            setSearchLoading(false)
+        }
     }
 
     const displayOptions = searchQuery.trim()
@@ -312,7 +358,13 @@ function VideoReplacementModal({
                         type="text"
                         placeholder="🔍 Buscar globalmente (Pexels + Pixabay)..."
                         value={searchQuery}
-                        onChange={(e) => handleSearch(e.target.value)}
+                        onChange={(e) => handleSearchInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault()
+                                runSearch(false)
+                            }
+                        }}
                         style={{
                             background: 'rgba(255,255,255,0.05)',
                             border: '1px solid var(--border)',
@@ -332,6 +384,41 @@ function VideoReplacementModal({
                             (e.target as HTMLInputElement).style.background = 'rgba(255,255,255,0.05)'
                         }}
                     />
+
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                            onClick={() => runSearch(false)}
+                            disabled={!searchQuery.trim() || searchLoading}
+                            style={{
+                                flex: 1,
+                                background: 'rgba(124,58,237,0.18)',
+                                border: '1px solid var(--border)',
+                                borderRadius: 6,
+                                color: 'var(--text)',
+                                padding: '8px 10px',
+                                cursor: !searchQuery.trim() || searchLoading ? 'not-allowed' : 'pointer',
+                                opacity: !searchQuery.trim() || searchLoading ? 0.6 : 1,
+                            }}
+                        >
+                            🔎 Buscar
+                        </button>
+                        <button
+                            onClick={() => runSearch(true)}
+                            disabled={!searchQuery.trim() || searchLoading}
+                            style={{
+                                flex: 1,
+                                background: 'rgba(255,255,255,0.08)',
+                                border: '1px solid var(--border)',
+                                borderRadius: 6,
+                                color: 'var(--text)',
+                                padding: '8px 10px',
+                                cursor: !searchQuery.trim() || searchLoading ? 'not-allowed' : 'pointer',
+                                opacity: !searchQuery.trim() || searchLoading ? 0.6 : 1,
+                            }}
+                        >
+                            ➕ Buscar más
+                        </button>
+                    </div>
 
                     {(loading || searchLoading) && (
                         <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>⏳ Buscando videos...</div>
@@ -384,6 +471,27 @@ function VideoReplacementModal({
                             ))}
                         </div>
                     )}
+
+                    <button
+                        onClick={() => {
+                            if (!previewUrl) return
+                            onPick(previewUrl)
+                        }}
+                        disabled={!previewUrl}
+                        style={{
+                            marginTop: 6,
+                            background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                            border: 'none',
+                            borderRadius: 8,
+                            color: 'white',
+                            fontWeight: 700,
+                            padding: '10px 12px',
+                            cursor: previewUrl ? 'pointer' : 'not-allowed',
+                            opacity: previewUrl ? 1 : 0.5,
+                        }}
+                    >
+                        ✅ Seleccionar video
+                    </button>
                 </div>
             </div>
         </div>

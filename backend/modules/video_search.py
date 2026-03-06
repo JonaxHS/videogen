@@ -228,6 +228,7 @@ def search_video_options(
     fallback_keywords: str = "nature landscape",
     limit: int = 8,
     global_search: bool = False,
+    page: int = 1,
     exclude_urls: set[str] | None = None,
 ) -> list[dict]:
     """Return ranked video options from configured providers for manual segment replacement."""
@@ -268,9 +269,25 @@ def search_video_options(
     for query in query_candidates:
         for provider_name, provider_key in providers:
             if provider_name == "pexels":
-                all_candidates.extend(_search_pexels_candidates(query, provider_key, min_duration, per_page=pexels_per_page))
+                all_candidates.extend(
+                    _search_pexels_candidates(
+                        query,
+                        provider_key,
+                        min_duration,
+                        per_page=pexels_per_page,
+                        page=page,
+                    )
+                )
             else:
-                all_candidates.extend(_search_pixabay_candidates(query, provider_key, min_duration, per_page=pixabay_per_page))
+                all_candidates.extend(
+                    _search_pixabay_candidates(
+                        query,
+                        provider_key,
+                        min_duration,
+                        per_page=pixabay_per_page,
+                        page=page,
+                    )
+                )
 
     best_by_url: dict[str, dict] = {}
     for candidate in all_candidates:
@@ -359,12 +376,14 @@ def _search_pexels_candidates(
     api_key: str,
     min_duration: int,
     per_page: int = 20,
+    page: int = 1,
 ) -> list[dict]:
     headers = {"Authorization": api_key}
     params = {
         "query": query,
         "size": "medium",
         "per_page": per_page,
+        "page": max(1, int(page)),
     }
 
     try:
@@ -452,11 +471,13 @@ def _search_pixabay_candidates(
     api_key: str,
     min_duration: int,
     per_page: int = 25,
+    page: int = 1,
 ) -> list[dict]:
     params = {
         "key": api_key,
         "q": query,
         "per_page": per_page,
+        "page": max(1, int(page)),
         "safesearch": "true",
     }
 

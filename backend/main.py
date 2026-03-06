@@ -113,6 +113,7 @@ class VideoOptionsRequest(BaseModel):
     min_duration: int = 5
     limit: int = 8
     global_search: bool = False
+    page: int = 1
     exclude_urls: list[str] = Field(default_factory=list)
 
 
@@ -352,6 +353,7 @@ def video_options(req: VideoOptionsRequest):
         min_duration=max(3, int(req.min_duration)),
         limit=max(1, min(50, int(req.limit))),
         global_search=bool(req.global_search),
+        page=max(1, int(req.page)),
         exclude_urls=set(req.exclude_urls or []),
     )
     return {"options": options}
