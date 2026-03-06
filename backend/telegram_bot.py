@@ -69,6 +69,21 @@ def send_chat_action(chat_id: int, action: str) -> None:
     _tg_call("sendChatAction", json={"chat_id": chat_id, "action": action}, timeout=15)
 
 
+def set_bot_commands() -> None:
+    commands = [
+        {"command": "start", "description": "Bienvenida y guía rápida"},
+        {"command": "help", "description": "Ver ayuda y comandos"},
+        {"command": "commands", "description": "Lista de comandos"},
+        {"command": "chat", "description": "Conversar con Qwen"},
+        {"command": "script", "description": "Generar guion con Qwen"},
+        {"command": "video", "description": "Generar video desde guion"},
+        {"command": "generate", "description": "Alias de /video"},
+        {"command": "ping", "description": "Verificar estado del bot"},
+        {"command": "id", "description": "Ver tu chat id"},
+    ]
+    _tg_call("setMyCommands", json={"commands": commands}, timeout=30)
+
+
 def compress_for_telegram(input_path: str, max_size_mb: int = 45) -> str:
     """
     Compress video for Telegram to stay under 50MB limit.
@@ -530,6 +545,10 @@ def run_bot() -> None:
     # Ensure polling mode works even if a previous webhook was configured
     _tg_call("deleteWebhook", json={"drop_pending_updates": False}, timeout=30)
     me = _tg_call("getMe", timeout=30).get("result", {})
+    try:
+        set_bot_commands()
+    except Exception as exc:
+        print(f"[telegram-bot] warning setMyCommands failed: {exc}")
     print(f"[telegram-bot] iniciado como @{me.get('username', 'unknown')} (id={me.get('id', 'n/a')})")
     offset = 0
 
