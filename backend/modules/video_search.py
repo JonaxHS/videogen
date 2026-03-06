@@ -5,10 +5,12 @@ Uses local semantic embeddings for intelligent video matching.
 """
 import hashlib
 import re
+import os
 import requests
 from pathlib import Path
 from typing import Optional
 import numpy as np
+from datetime import datetime, timedelta
 
 PEXELS_API_BASE = "https://api.pexels.com/videos"
 PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
@@ -81,6 +83,78 @@ def _detect_intro_seconds(title: str, description: str) -> float:
 _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 _ESA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
+
+# Auto-cleanup configuration
+MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "5000"))  # Default 5GB
+MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "7"))  # Default 7 days
+_LAST_CLEANUP_TIME = datetime.now()
+
+
+def _cleanup_cache_if_needed():
+    """
+    Automatically clean up cache if it exceeds size limit or files are too old.
+    Runs at most every 60 seconds to avoid overhead.
+    """
+    global _LAST_CLEANUP_TIME
+    
+    now = datetime.now()
+    if (now - _LAST_CLEANUP_TIME).total_seconds() < 60:
+        return  # Skip if cleanup ran recently
+    
+    _LAST_CLEANUP_TIME = now
+    
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Calculate current cache size
+        total_size = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file())
+        total_size_mb = total_size / (1024 * 1024)
+        
+        # Check size limit
+        if total_size_mb > MAX_CACHE_SIZE_MB:
+            print(f"[Cache] Size {total_size_mb:.1f}MB exceeds limit {MAX_CACHE_SIZE_MB}MB. Cleaning...")
+            _cleanup_old_files(target_mb=MAX_CACHE_SIZE_MB * 0.8)  # Clean to 80% of limit
+        
+        # Check file age
+        cutoff_time = (now - timedelta(days=MAX_FILE_AGE_DAYS)).timestamp()
+        for file_path in CACHE_DIR.rglob("*"):
+            if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
+                try:
+                    file_path.unlink()
+                    print(f"[Cache] Removed old file: {file_path.name}")
+                except Exception as e:
+                    print(f"[Cache] Error removing {file_path.name}: {e}")
+    
+    except Exception as e:
+        print(f"[Cache] Cleanup error: {e}")
+
+
+def _cleanup_old_files(target_mb: float):
+    """Remove oldest files until cache is below target size."""
+    if not CACHE_DIR.exists():
+        return
+    
+    current_size = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024 * 1024)
+    if current_size <= target_mb:
+        return
+    
+    # Get files sorted by modification time (oldest first)
+    files = sorted(
+        (f for f in CACHE_DIR.rglob("*") if f.is_file()),
+        key=lambda f: f.stat().st_mtime
+    )
+    
+    for file_path in files:
+        if current_size <= target_mb:
+            break
+        
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        try:
+            file_path.unlink()
+            current_size -= file_size_mb
+            print(f"[Cache] Removed: {file_path.name} ({file_size_mb:.1f}MB)")
+        except Exception as e:
+            print(f"[Cache] Error removing {file_path.name}: {e}")
 
 # Intro detection patterns
 INTRO_KEYWORDS = {
@@ -566,6 +640,9 @@ def download_video_from_url(video_url: str, provider_hint: str = "manual") -> st
         if file_size < 1000:  # Less than 1KB is likely an error page
             cached_path.unlink()
             raise RuntimeError(f"Downloaded file too small ({file_size} bytes), likely error page")
+
+        # Trigger automatic cache cleanup after successful download
+        _cleanup_cache_if_needed()
 
         return str(cached_path)
     except Exception as e:

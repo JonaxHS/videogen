@@ -11,6 +11,13 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    memswap_limit: 1G
 
   frontend:
     build: ./frontend
