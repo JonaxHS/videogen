@@ -84,21 +84,23 @@ _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 _ESA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 
-# Auto-cleanup configuration
-MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "5000"))  # Default 5GB
-MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "7"))  # Default 7 days
+# Auto-cleanup configuration (strict defaults for VPS stability)
+MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))  # Default 800MB
+MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))  # Default 1 day
+MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))  # If >0, overrides days
+CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
 _LAST_CLEANUP_TIME = datetime.now()
 
 
-def _cleanup_cache_if_needed():
+def _cleanup_cache_if_needed(force: bool = False):
     """
     Automatically clean up cache if it exceeds size limit or files are too old.
-    Runs at most every 60 seconds to avoid overhead.
+    Runs at most every CACHE_CLEANUP_INTERVAL_SECONDS unless force=True.
     """
     global _LAST_CLEANUP_TIME
     
     now = datetime.now()
-    if (now - _LAST_CLEANUP_TIME).total_seconds() < 60:
+    if not force and (now - _LAST_CLEANUP_TIME).total_seconds() < CACHE_CLEANUP_INTERVAL_SECONDS:
         return  # Skip if cleanup ran recently
     
     _LAST_CLEANUP_TIME = now
@@ -115,8 +117,9 @@ def _cleanup_cache_if_needed():
             print(f"[Cache] Size {total_size_mb:.1f}MB exceeds limit {MAX_CACHE_SIZE_MB}MB. Cleaning...")
             _cleanup_old_files(target_mb=MAX_CACHE_SIZE_MB * 0.8)  # Clean to 80% of limit
         
-        # Check file age
-        cutoff_time = (now - timedelta(days=MAX_FILE_AGE_DAYS)).timestamp()
+        # Check file age (hours override days when configured)
+        file_age_delta = timedelta(hours=MAX_FILE_AGE_HOURS) if MAX_FILE_AGE_HOURS > 0 else timedelta(days=MAX_FILE_AGE_DAYS)
+        cutoff_time = (now - file_age_delta).timestamp()
         for file_path in CACHE_DIR.rglob("*"):
             if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
                 try:
@@ -427,6 +430,9 @@ def search_video_options(
     exclude_urls: set[str] | None = None,
 ) -> list[dict]:
     """Return ranked video options from configured providers for manual segment replacement."""
+    # Keep cache bounded even when requests reuse cached assets heavily.
+    _cleanup_cache_if_needed()
+
     # NASA is public (no API key required), so we always keep it as optional provider.
     # If keys are missing, NASA can still return results.
 
@@ -631,6 +637,8 @@ def search_video_options(
 def download_video_from_url(video_url: str, provider_hint: str = "manual") -> str:
     """Download and cache a video by URL, returning local path."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _cleanup_cache_if_needed()
+
     cache_key = f"{provider_hint}:{video_url}"
     url_hash = hashlib.md5(cache_key.encode()).hexdigest()
     cached_path = CACHE_DIR / f"{url_hash}.mp4"
