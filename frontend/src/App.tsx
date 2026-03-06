@@ -1439,6 +1439,7 @@ export default function App() {
                                         <option value="yellow-subtitle">💛 Amarillo (Tradicional)</option>
                                         <option value="minimal">🔍 Minimalista (Pequeño/Arriba)</option>
                                         <option value="neon">💫 Neón (Cyan brillante)</option>
+                                        <option value="karaoke">🎤 Karaoke (Progresivo)</option>
                                     </select>
                                 </div>
                             )}

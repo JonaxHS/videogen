@@ -15,7 +15,7 @@ OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 FPS = 30
 OUTPUT_FORMAT = "mp4"
-NASA_INTRO_SKIP_SECONDS = 2.0
+NASA_INTRO_SKIP_SECONDS = float(os.getenv("NASA_INTRO_SKIP_SECONDS", "2.0"))
 
 # Subtitle styles: {name: {fontsize, color, bgcolor, position, extra_params}}
 SUBTITLE_STYLES = {
@@ -73,6 +73,19 @@ SUBTITLE_STYLES = {
         "boxborderw": 10,
         "extra": ":shadowx=2:shadowy=2:shadowcolor=cyan@0.5"
     },
+    "karaoke": {
+        "fontsize": 58,
+        "fontcolor": "white",
+        "boxcolor": "none",
+        "position": "bottom",
+        "line_spacing": 8,
+        "boxborderw": 0,
+        "borderw": 4,
+        "bordercolor": "black",
+        "max_steps": 16,
+        "mode": "progressive",
+        "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
+    },
 }
 
 # Default style
@@ -129,6 +142,7 @@ def compose_video(
             output_path=str(seg_path),
             show_subtitles=show_subtitles,
             video_provider=seg.get("video_provider", "manual"),
+            video_source_url=seg.get("video_source_url", ""),
             subtitle_style=subtitle_style,
         )
         segment_files.append(str(seg_path))
@@ -180,6 +194,7 @@ def _compose_segment(
     output_path: str,
     show_subtitles: bool,
     video_provider: str = "manual",
+    video_source_url: str = "",
     subtitle_style: str = DEFAULT_SUBTITLE_STYLE,
 ) -> None:
     """
@@ -207,6 +222,10 @@ def _compose_segment(
         position = style["position"]
         line_spacing = style["line_spacing"]
         boxborderw = style["boxborderw"]
+        borderw = int(style.get("borderw", 0) or 0)
+        bordercolor = str(style.get("bordercolor", "black"))
+        mode = str(style.get("mode", "static"))
+        max_steps = int(style.get("max_steps", 16) or 16)
         extra = style["extra"]
 
         # Calculate Y position based on position parameter
@@ -217,28 +236,47 @@ def _compose_segment(
         else:  # bottom (default)
             y_pos = "h-text_h-120"
 
-        # Build drawtext filter; disable box when style requests transparent/no border
+        # Build drawtext filter(s)
         use_box = boxborderw > 0 and str(boxcolor).strip().lower() not in {"", "transparent", "none"}
-        drawtext_parts = [
-            "drawtext=",
-            f"text='{safe_text}':",
-            f"fontcolor={fontcolor}:",
-            f"fontsize={fontsize}:",
-            f"box={1 if use_box else 0}:",
-        ]
-        if use_box:
-            drawtext_parts.append(f"boxcolor={boxcolor}:")
-            drawtext_parts.append(f"boxborderw={boxborderw}:")
 
-        drawtext_parts.extend([
-            "x=(w-text_w)/2:",
-            f"y={y_pos}:",
-            f"line_spacing={line_spacing}:",
-            "font=Sans:",
-            "fix_bounds=true",
-            f"{extra}",
-        ])
-        drawtext_filter = "".join(drawtext_parts)
+        if mode == "progressive":
+            drawtext_filter = _build_progressive_drawtext_filter(
+                text=text,
+                safe_text=safe_text,
+                audio_duration=audio_duration,
+                fontcolor=fontcolor,
+                fontsize=fontsize,
+                y_pos=y_pos,
+                line_spacing=line_spacing,
+                borderw=borderw,
+                bordercolor=bordercolor,
+                extra=extra,
+                max_steps=max_steps,
+            )
+        else:
+            drawtext_parts = [
+                "drawtext=",
+                f"text='{safe_text}':",
+                f"fontcolor={fontcolor}:",
+                f"fontsize={fontsize}:",
+                f"box={1 if use_box else 0}:",
+            ]
+            if use_box:
+                drawtext_parts.append(f"boxcolor={boxcolor}:")
+                drawtext_parts.append(f"boxborderw={boxborderw}:")
+            if borderw > 0:
+                drawtext_parts.append(f"borderw={borderw}:")
+                drawtext_parts.append(f"bordercolor={bordercolor}:")
+
+            drawtext_parts.extend([
+                "x=(w-text_w)/2:",
+                f"y={y_pos}:",
+                f"line_spacing={line_spacing}:",
+                "font=Sans:",
+                "fix_bounds=true",
+                f"{extra}",
+            ])
+            drawtext_filter = "".join(drawtext_parts)
 
         filter_complex = (
             f"[0:v]"
@@ -259,9 +297,14 @@ def _compose_segment(
             f"[out]"
         )
 
+    provider_value = (video_provider or "").lower()
+    source_value = (video_source_url or "").lower()
+    is_nasa_clip = ("nasa" in provider_value) or ("nasa" in source_value)
+
+    # Put -ss BEFORE -stream_loop for NASA so looping starts after intro trim.
     video_input_options = ["-stream_loop", "-1"]
-    if (video_provider or "").lower() == "nasa":
-        video_input_options.extend(["-ss", str(NASA_INTRO_SKIP_SECONDS)])
+    if is_nasa_clip:
+        video_input_options = ["-ss", str(NASA_INTRO_SKIP_SECONDS), "-stream_loop", "-1"]
 
     if audio_path:
         cmd = [
@@ -302,6 +345,75 @@ def _compose_segment(
         raise RuntimeError(
             f"FFmpeg error composing segment:\n{result.stderr[-1000:]}"
         )
+
+
+def _build_progressive_drawtext_filter(
+    text: str,
+    safe_text: str,
+    audio_duration: float,
+    fontcolor: str,
+    fontsize: int,
+    y_pos: str,
+    line_spacing: int,
+    borderw: int,
+    bordercolor: str,
+    extra: str,
+    max_steps: int,
+) -> str:
+    words = [w for w in (text or "").split() if w.strip()]
+    if len(words) <= 1 or audio_duration <= 0.2:
+        parts = [
+            "drawtext=",
+            f"text='{safe_text}':",
+            f"fontcolor={fontcolor}:",
+            f"fontsize={fontsize}:",
+            "box=0:",
+            f"borderw={max(0, int(borderw))}:",
+            f"bordercolor={bordercolor}:",
+            "x=(w-text_w)/2:",
+            f"y={y_pos}:",
+            f"line_spacing={line_spacing}:",
+            "font=Sans:",
+            "fix_bounds=true",
+            f"{extra}",
+        ]
+        return "".join(parts)
+
+    steps = max(2, min(len(words), max_steps))
+    group_size = max(1, (len(words) + steps - 1) // steps)
+    phrases = []
+    for end in range(group_size, len(words) + group_size, group_size):
+        phrase = " ".join(words[: min(end, len(words))]).strip()
+        if phrase:
+            phrases.append(_escape_ffmpeg_text(phrase))
+    if not phrases:
+        phrases = [safe_text]
+
+    step_duration = max(0.08, audio_duration / max(1, len(phrases)))
+    filters = []
+
+    for idx, phrase in enumerate(phrases):
+        start_t = idx * step_duration
+        end_t = audio_duration + 0.02 if idx == len(phrases) - 1 else (idx + 1) * step_duration
+        parts = [
+            "drawtext=",
+            f"text='{phrase}':",
+            f"fontcolor={fontcolor}:",
+            f"fontsize={fontsize}:",
+            "box=0:",
+            f"borderw={max(0, int(borderw))}:",
+            f"bordercolor={bordercolor}:",
+            "x=(w-text_w)/2:",
+            f"y={y_pos}:",
+            f"line_spacing={line_spacing}:",
+            "font=Sans:",
+            "fix_bounds=true:",
+            f"enable='between(t,{start_t:.2f},{end_t:.2f})'",
+            f"{extra}",
+        ]
+        filters.append("".join(parts))
+
+    return ",".join(filters)
 
 
 def _escape_ffmpeg_text(text: str) -> str:
