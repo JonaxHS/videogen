@@ -25,6 +25,7 @@ POLL_TIMEOUT = int(os.getenv("TELEGRAM_LONG_POLL_TIMEOUT", "30"))
 JOB_TIMEOUT_SEC = int(os.getenv("TELEGRAM_JOB_TIMEOUT_SEC", "1800"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
 OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", os.getenv("OLLAMA_SCRIPT_MODEL", "qwen2.5:7b-instruct"))
+OLLAMA_CHAT_TIMEOUT_SEC = int(os.getenv("OLLAMA_CHAT_TIMEOUT_SEC", "120"))
 SCRIPT_DEFAULT_TONE = os.getenv("TELEGRAM_SCRIPT_DEFAULT_TONE", "educativo viral")
 SCRIPT_DEFAULT_DURATION = int(os.getenv("TELEGRAM_SCRIPT_DEFAULT_DURATION", "60"))
 
@@ -280,10 +281,46 @@ def ollama_chat(chat_id: int, user_text: str) -> str:
         "options": {"temperature": 0.7, "top_p": 0.9},
     }
 
-    response = requests.post(f"{OLLAMA_BASE_URL}/api/chat", json=chat_payload, timeout=120)
-    if response.status_code == 404:
-        response = requests.post(f"{OLLAMA_BASE_URL}/api/generate", json=generate_payload, timeout=120)
-    response.raise_for_status()
+    short_messages = [
+        {"role": "system", "content": "Responde en español de forma clara y breve."},
+        {"role": "user", "content": user_text},
+    ]
+    short_chat_payload = {
+        "model": OLLAMA_CHAT_MODEL,
+        "messages": short_messages,
+        "stream": False,
+        "options": {"temperature": 0.6, "top_p": 0.9},
+    }
+
+    response = None
+    attempts = [
+        ("/api/chat", chat_payload),
+        ("/api/generate", generate_payload),
+        ("/api/chat", short_chat_payload),
+    ]
+    last_error = None
+
+    for endpoint, payload in attempts:
+        try:
+            response = requests.post(
+                f"{OLLAMA_BASE_URL}{endpoint}",
+                json=payload,
+                timeout=OLLAMA_CHAT_TIMEOUT_SEC,
+            )
+            if response.status_code == 404 and endpoint == "/api/chat":
+                continue
+            response.raise_for_status()
+            break
+        except requests.RequestException as e:
+            last_error = e
+            response = None
+            continue
+
+    if response is None:
+        raise RuntimeError(
+            f"Error conectando con Ollama ({OLLAMA_BASE_URL}) usando modelo {OLLAMA_CHAT_MODEL}: {last_error}"
+        )
+
     payload = response.json() or {}
 
     answer = str(((payload.get("message") or {}).get("content")) or payload.get("response") or "").strip()
