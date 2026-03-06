@@ -1289,11 +1289,13 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
         url = str(candidate.get("url", ""))
         lines.append(f"{i}) provider={provider} duration={duration}s score={score} url={url}")
 
+    options_text = "\n".join(lines)
+
     user_prompt = (
         "Selecciona el video que mejor encaja con el guion o segmento.\n"
         f"Consulta: {query_text or 'video relevante y coherente'}\n"
         "Opciones:\n"
-        f"{'\n'.join(lines)}\n\n"
+        f"{options_text}\n\n"
         "Responde SOLO con el número de la mejor opción (ejemplo: 3)."
     )
 
