@@ -152,13 +152,14 @@ function VideoReplacementModal({
     // Reset preview URL when segment changes
     useEffect(() => {
         if (isOpen && segment) {
-            setPreviewUrl('')
+            const initial = selectedUrl || options[0]?.url || ''
+            setPreviewUrl(initial)
             setSearchQuery('')
             setSearchResults([])
             setSearchPage(1)
             setSearchSeed(makeFreshSeed())
         }
-    }, [segment?.id, isOpen, selectedUrl])
+    }, [segment?.id, isOpen])
 
     useEffect(() => {
         if (!isOpen) return
@@ -192,9 +193,6 @@ function VideoReplacementModal({
                 })
                 if (!cancelled) {
                     setDefaultGlobalOptions(res.options || [])
-                    if (!previewUrl && res.options && res.options.length > 0) {
-                        setPreviewUrl(res.options[0].url)
-                    }
                 }
             } catch {
                 if (!cancelled) {
