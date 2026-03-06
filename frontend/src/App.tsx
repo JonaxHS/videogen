@@ -435,18 +435,25 @@ function VideoReplacementModal({
                     </button>
 
                     {(loading || searchLoading) && (
-                        <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>⏳ Buscando videos...</div>
-                    )}
-
-                    {!loading && !searchLoading && previewUrl && (
-                        <div style={{ fontSize: 12, opacity: 0.75 }}>
-                            Vista previa: {selectedPreviewOption?.provider || 'video seleccionado'} · {selectedPreviewOption?.duration || '?'}s
-                        </div>
-                    )}
-
-                    {!loading && !searchLoading && displayOptions.length === 0 && (
-                        <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>
-                            {searchQuery.trim() ? 'No se encontraron videos' : 'No hay opciones de video'}
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 12,
+                            padding: 24,
+                            minHeight: 200
+                        }}>
+                            <div style={{
+                                width: 40,
+                                height: 40,
+                                border: '3px solid rgba(255,255,255,0.1)',
+                                borderTop: '3px solid var(--accent)',
+                                borderRadius: '50%',
+                                animation: 'spin 0.8s linear infinite',
+                            }} />
+                            <div style={{ fontSize: 14, fontWeight: 500 }}>🎬 Buscando videos...</div>
+                            <div style={{ fontSize: 12, opacity: 0.6 }}>Esto puede tomar unos segundos</div>
                         </div>
                     )}
 
