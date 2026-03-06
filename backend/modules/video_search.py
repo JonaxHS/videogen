@@ -1195,24 +1195,11 @@ def _search_esa_candidates(
         # Extract fields from ESA response
         title = str(item.get("title", "")).strip() if item.get("title") else ""
         description = str(item.get("description", "")).strip() if item.get("description") else ""
-        
-        # Look for video links in related links
-        related_links = item.get("links", {}).get("related", [])
-        if not isinstance(related_links, list):
-            related_links = [related_links] if related_links else []
 
-        video_url = None
-        thumbnail = None
-
-        for link in related_links:
-            href = str(link.get("href", "")).strip() if link.get("href") else ""
-            rel_type = str(link.get("rel", "")).lower() if link.get("rel") else ""
-
-            if href.endswith((".mp4", ".webm", ".mov")):
-                video_url = href
-            if "preview" in rel_type or "thumbnail" in rel_type:
-                if href.endswith((".jpg", ".jpeg", ".png")):
-                    thumbnail = href
+        # ESA payload can vary; collect URLs recursively from the entire item.
+        all_urls = _collect_urls_from_esa_item(item)
+        video_url = _pick_best_esa_video_url(all_urls)
+        thumbnail = _pick_best_esa_thumbnail_url(all_urls)
 
         if not video_url:
             continue
@@ -1238,6 +1225,93 @@ def _search_esa_candidates(
     result = sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
     _ESA_QUERY_CACHE[cache_key] = [dict(item) for item in result]
     return result
+
+
+def _collect_urls_from_esa_item(value) -> list[str]:
+    urls: list[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+            return
+        if isinstance(node, list):
+            for v in node:
+                walk(v)
+            return
+        if isinstance(node, str):
+            s = node.strip()
+            if s.startswith("http://") or s.startswith("https://"):
+                urls.append(s)
+
+    walk(value)
+
+    # Deduplicate preserving order
+    seen = set()
+    unique = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            unique.append(u)
+    return unique
+
+
+def _pick_best_esa_video_url(urls: list[str]) -> Optional[str]:
+    if not urls:
+        return None
+
+    def base_url(u: str) -> str:
+        return u.lower().split("?")[0]
+
+    allowed_ext = (".mp4", ".webm", ".mov", ".m4v", ".m3u8")
+    video_candidates = [u for u in urls if base_url(u).endswith(allowed_ext) or "/video" in u.lower()]
+    if not video_candidates:
+        return None
+
+    def quality_key(u: str) -> tuple[int, int]:
+        v = u.lower()
+        score = 0
+        if "4k" in v or "2160" in v:
+            score += 50
+        if "1080" in v:
+            score += 40
+        if "720" in v:
+            score += 30
+        if "master" in v or "orig" in v:
+            score += 20
+        if v.split("?")[0].endswith(".m3u8"):
+            score -= 5  # prefer direct mp4 when available
+        return score, len(u)
+
+    video_candidates.sort(key=quality_key, reverse=True)
+    return video_candidates[0]
+
+
+def _pick_best_esa_thumbnail_url(urls: list[str]) -> str:
+    if not urls:
+        return ""
+
+    def base_url(u: str) -> str:
+        return u.lower().split("?")[0]
+
+    image_candidates = [
+        u for u in urls
+        if base_url(u).endswith((".jpg", ".jpeg", ".png", ".webp"))
+    ]
+    if not image_candidates:
+        return ""
+
+    def thumb_key(u: str) -> tuple[int, int]:
+        v = u.lower()
+        score = 0
+        if "thumb" in v or "thumbnail" in v or "preview" in v:
+            score += 20
+        if "small" in v:
+            score -= 5
+        return score, len(u)
+
+    image_candidates.sort(key=thumb_key, reverse=True)
+    return image_candidates[0]
 
 
 def _translate_terms(terms: list[str]) -> list[str]:

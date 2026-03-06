@@ -184,7 +184,7 @@ function VideoReplacementModal({
                     global_search: true,
                     prefer_nasa: true,
                     page: 1,
-                    exclude_urls: [],
+                    exclude_urls: options.map(o => o.url),
                     include_providers: selectedProviders,
                     search_seed: searchSeed,
                 })
@@ -209,7 +209,7 @@ function VideoReplacementModal({
         return () => {
             cancelled = true
         }
-    }, [isOpen, segment, selectedProviders, searchSeed])
+    }, [isOpen, segment, selectedProviders, searchSeed, options])
 
     // Debounced search handler
     const handleSearchInput = (query: string) => {
@@ -294,9 +294,7 @@ function VideoReplacementModal({
         }
     }
 
-    const displayOptions = searchQuery.trim()
-        ? searchResults
-        : (defaultGlobalOptions.length > 0 ? defaultGlobalOptions : options)
+    const displayOptions = searchQuery.trim() ? searchResults : defaultGlobalOptions
 
     const selectedPreviewOption = displayOptions.find(o => o.url === previewUrl)
 
@@ -1412,9 +1410,10 @@ export default function App() {
                         const options = res.options || []
                         videosBySegId[seg.id] = options
 
-                        const topUrl = options[0]?.url
-                        if (topUrl) {
-                            usedPreviewUrls.add(topUrl)
+                        for (const candidate of options.slice(0, 3)) {
+                            if (candidate?.url) {
+                                usedPreviewUrls.add(candidate.url)
+                            }
                         }
                     } catch {
                         videosBySegId[seg.id] = []
