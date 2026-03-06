@@ -1064,7 +1064,16 @@ export default function App() {
                 const parsed = await apiPost<ParseResponse>('/parse', { script })
                 const newSegs = parsed.segments || []
                 setSegments(newSegs)
-                setSelectedVideos({})
+                // Preserve selected videos for segments that still exist
+                setSelectedVideos(prev => {
+                    const preserved: Record<number, string> = {}
+                    for (const seg of newSegs) {
+                        if (prev[seg.id]) {
+                            preserved[seg.id] = prev[seg.id]
+                        }
+                    }
+                    return preserved
+                })
                 setPreviewingSeg(null)
 
                 // Load videos segment by segment to avoid repeating the same top clip
