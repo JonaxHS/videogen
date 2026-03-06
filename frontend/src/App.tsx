@@ -69,6 +69,12 @@ interface VideoOptionsResponse {
     options: VideoOption[]
 }
 
+interface ScriptGenerationResponse {
+    script: string
+    model: string
+    duration_seconds: number
+}
+
 const PREF_KEYS = {
     selectedVoice: 'videogen:selectedVoice',
     rate: 'videogen:rate',
@@ -1160,6 +1166,10 @@ export default function App() {
     const [showConfigPanel, setShowConfigPanel] = useState(false)
     const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
+    const [scriptTopic, setScriptTopic] = useState('')
+    const [scriptTone, setScriptTone] = useState('educativo viral')
+    const [scriptDurationSeconds, setScriptDurationSeconds] = useState(60)
+    const [scriptGeneratorLoading, setScriptGeneratorLoading] = useState(false)
     const [segments, setSegments] = useState<Segment[]>([])
     const [selectedVideos, setSelectedVideos] = useState<Record<number, string>>({})
     const [videoOptionsBySeg, setVideoOptionsBySeg] = useState<Record<number, VideoOption[]>>({})
@@ -1464,6 +1474,29 @@ export default function App() {
         }
     }
 
+    const handleGenerateScriptWithAI = useCallback(async () => {
+        if (!scriptTopic.trim()) {
+            setError('Escribe un tema para generar el guion con IA')
+            return
+        }
+
+        setError(null)
+        setScriptGeneratorLoading(true)
+        try {
+            const res = await apiPost<ScriptGenerationResponse>('/generate-script', {
+                topic: scriptTopic,
+                tone: scriptTone,
+                duration_seconds: scriptDurationSeconds,
+                language: 'es',
+            })
+            setScript(res.script || '')
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : 'No se pudo generar el guion con IA')
+        } finally {
+            setScriptGeneratorLoading(false)
+        }
+    }, [scriptTopic, scriptTone, scriptDurationSeconds])
+
     const wordCount = script.trim() ? script.trim().split(/\s+/).length : 0
     const estTotalDuration = segments.reduce((acc, s) => acc + s.estimated_duration, 0)
     const isDone = job?.status === 'done'
@@ -1548,6 +1581,48 @@ export default function App() {
 
                     <div className="card">
                         <div className="card-title"><span>📝</span> Tu Guion</div>
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 160px 130px',
+                            gap: 10,
+                            marginBottom: 10,
+                        }}>
+                            <input
+                                type="text"
+                                placeholder="Tema del guion (ej: viajar al futuro con relatividad)"
+                                value={scriptTopic}
+                                onChange={e => setScriptTopic(e.target.value)}
+                                disabled={!!isRunning || scriptGeneratorLoading}
+                                style={{ width: '100%' }}
+                            />
+                            <input
+                                type="text"
+                                placeholder="Tono"
+                                value={scriptTone}
+                                onChange={e => setScriptTone(e.target.value)}
+                                disabled={!!isRunning || scriptGeneratorLoading}
+                                style={{ width: '100%' }}
+                            />
+                            <input
+                                type="number"
+                                min={15}
+                                max={180}
+                                step={5}
+                                value={scriptDurationSeconds}
+                                onChange={e => setScriptDurationSeconds(Number(e.target.value || 60))}
+                                disabled={!!isRunning || scriptGeneratorLoading}
+                                style={{ width: '100%' }}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+                            <button
+                                className="btn-secondary"
+                                onClick={handleGenerateScriptWithAI}
+                                disabled={!!isRunning || scriptGeneratorLoading || !scriptTopic.trim()}
+                            >
+                                {scriptGeneratorLoading ? '🤖 Generando con Qwen...' : '🤖 Generar guion con Qwen'}
+                            </button>
+                        </div>
                         <textarea
                             id="script-input"
                             className="script-area"

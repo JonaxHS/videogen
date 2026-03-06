@@ -5,6 +5,7 @@ Handles script parsing, TTS generation, video search, and composition.
 import os
 import uuid
 import asyncio
+import requests
 from pathlib import Path
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,8 @@ MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))
 MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))
 MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))
 CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_SCRIPT_MODEL = os.getenv("OLLAMA_SCRIPT_MODEL", "qwen2.5:7b-instruct")
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
@@ -130,6 +133,13 @@ class CacheSettingsRequest(BaseModel):
 
 class ParseRequest(BaseModel):
     script: str
+
+
+class ScriptGenerationRequest(BaseModel):
+    topic: str
+    tone: str = "educativo viral"
+    duration_seconds: int = 60
+    language: str = "es"
 
 
 class VideoOptionsRequest(BaseModel):
@@ -490,6 +500,92 @@ def parse(req: ParseRequest):
         return {"segments": []}
     segments = parse_script(req.script)
     return {"segments": segments}
+
+
+@app.post("/api/generate-script")
+def generate_script(req: ScriptGenerationRequest):
+    topic = (req.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="El tema no puede estar vacío")
+
+    duration_seconds = max(15, min(180, int(req.duration_seconds or 60)))
+    tone = (req.tone or "educativo viral").strip()
+    language = (req.language or "es").strip().lower()
+
+    script_text = _generate_script_with_ollama(
+        topic=topic,
+        tone=tone,
+        duration_seconds=duration_seconds,
+        language=language,
+    )
+
+    return {
+        "script": script_text,
+        "model": OLLAMA_SCRIPT_MODEL,
+        "duration_seconds": duration_seconds,
+    }
+
+
+def _generate_script_with_ollama(topic: str, tone: str, duration_seconds: int, language: str = "es") -> str:
+    target_words = max(60, int((duration_seconds / 60) * 150))
+
+    if language.startswith("es"):
+        language_hint = "Escribe en español neutro."
+    else:
+        language_hint = "Write in the requested language."
+
+    prompt = (
+        f"Genera un guion corto para reel sobre: {topic}.\n"
+        f"Tono: {tone}.\n"
+        f"Duración objetivo: {duration_seconds} segundos (~{target_words} palabras).\n"
+        f"{language_hint}\n"
+        "Formato obligatorio:\n"
+        "- Solo entrega el guion final, sin explicaciones.\n"
+        "- Divide en párrafos cortos (1-2 frases por párrafo).\n"
+        "- Mantén ritmo dinámico y claro.\n"
+        "- Incluye cierre fuerte o reflexión final.\n"
+    )
+
+    payload = {
+        "model": OLLAMA_SCRIPT_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Eres un guionista experto en contenido corto para redes sociales.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.8,
+            "top_p": 0.9,
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+            json=payload,
+            timeout=180,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No se pudo generar guion con Qwen local. "
+                f"Verifica Ollama ({OLLAMA_BASE_URL}) y el modelo ({OLLAMA_SCRIPT_MODEL}). Error: {e}"
+            ),
+        )
+
+    text = ((data.get("message") or {}).get("content") or "").strip()
+    if not text:
+        raise HTTPException(status_code=500, detail="El modelo devolvió una respuesta vacía")
+    return text
 
 
 @app.post("/api/video-options")
