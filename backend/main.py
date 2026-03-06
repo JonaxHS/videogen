@@ -81,6 +81,13 @@ class GenerateRequest(BaseModel):
     selected_videos: Dict[str, str] = Field(default_factory=dict)
 
 
+class PreviewRequest(BaseModel):
+    script: str
+    show_subtitles: bool = True
+    subtitle_style: str = "classic"
+    selected_videos: Dict[str, str] = Field(default_factory=dict)
+
+
 class GenerateResponse(BaseModel):
     job_id: str
     segments: list
@@ -336,6 +343,47 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
     )
 
 
+@app.post("/api/generate-preview", response_model=GenerateResponse)
+def generate_preview(req: PreviewRequest, background_tasks: BackgroundTasks):
+    """Generate a full reel preview without TTS (video-only timeline)."""
+    if not req.script.strip():
+        raise HTTPException(status_code=400, detail="Script cannot be empty")
+
+    segments = parse_script(req.script)
+    if not segments:
+        raise HTTPException(status_code=400, detail="Could not parse any segments from the script")
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "status": "queued",
+        "progress": 0,
+        "message": "En cola...",
+        "segments": segments,
+        "error": None,
+        "output_path": None,
+        "preview_only": True,
+    }
+
+    background_tasks.add_task(
+        run_generation,
+        job_id=job_id,
+        segments=segments,
+        voice=DEFAULT_VOICE,
+        rate="+0%",
+        pitch="+0Hz",
+        show_subtitles=req.show_subtitles,
+        subtitle_style=req.subtitle_style,
+        selected_videos=req.selected_videos,
+        preview_only=True,
+    )
+
+    return GenerateResponse(
+        job_id=job_id,
+        segments=segments,
+        message=f"Previsualización iniciada con {len(segments)} segmento(s)"
+    )
+
+
 @app.post("/api/parse")
 def parse(req: ParseRequest):
     if not req.script.strip():
@@ -417,7 +465,7 @@ def download(job_id: str):
 # Generation Worker
 # ─────────────────────────────────────────────
 
-def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, subtitle_style: str = "classic", selected_videos: Optional[Dict[str, str]] = None):
+def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, subtitle_style: str = "classic", selected_videos: Optional[Dict[str, str]] = None, preview_only: bool = False):
     """Background task: TTS + video search + composition."""
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
@@ -435,20 +483,29 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             # Update progress
             prog_base = int((i / total) * 80)
             job["progress"] = prog_base
-            job["message"] = f"Segmento {i + 1}/{total}: generando voz..."
-
-            # 1. Generate TTS audio
-            audio_path = str(job_dir / f"audio_{i:03d}.mp3")
-            tts_result = generate_audio_sync(
-                text=seg["text"],
-                output_path=audio_path,
-                voice=voice,
-                rate=rate,
-                pitch=pitch,
+            job["message"] = (
+                f"Segmento {i + 1}/{total}: preparando duración de preview..."
+                if preview_only
+                else f"Segmento {i + 1}/{total}: generando voz..."
             )
 
-            # 2. Measure actual audio duration
-            audio_duration = get_audio_duration(tts_result["audio_path"])
+            if preview_only:
+                audio_duration = max(2.5, float(seg.get("estimated_duration", 5.0) or 5.0))
+                audio_file_path = None
+            else:
+                # 1. Generate TTS audio
+                audio_path = str(job_dir / f"audio_{i:03d}.mp3")
+                tts_result = generate_audio_sync(
+                    text=seg["text"],
+                    output_path=audio_path,
+                    voice=voice,
+                    rate=rate,
+                    pitch=pitch,
+                )
+
+                # 2. Measure actual audio duration
+                audio_duration = get_audio_duration(tts_result["audio_path"])
+                audio_file_path = tts_result["audio_path"]
 
             # 3. Download stock video
             job["message"] = f"Segmento {i + 1}/{total}: buscando video..."
@@ -480,7 +537,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
 
             composed_segments.append({
                 **seg,
-                "audio_path": tts_result["audio_path"],
+                "audio_path": audio_file_path,
                 "video_path": video_path,
                 "video_provider": video_provider,
                 "audio_duration": audio_duration,
@@ -506,7 +563,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
 
         job["status"] = "done"
         job["progress"] = 100
-        job["message"] = "¡Video generado con éxito!"
+        job["message"] = "¡Previsualización generada!" if preview_only else "¡Video generado con éxito!"
         job["output_path"] = output_path
 
     except Exception as e:

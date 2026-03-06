@@ -89,11 +89,12 @@ def compose_video(
     """
     Compose all segments into a final reel video using FFmpeg.
 
-    Each segment dict must have:
-      - video_path: str
-      - audio_path: str
-      - text: str
-      - audio_duration: float (seconds)
+        Each segment dict must have:
+            - video_path: str
+            - text: str
+            - audio_duration: float (seconds)
+        Optional:
+            - audio_path: str (if omitted, segment will be rendered without audio)
 
     Args:
       subtitle_style: one of the keys in SUBTITLE_STYLES
@@ -122,7 +123,7 @@ def compose_video(
         seg_path = temp_dir / f"segment_{i:03d}.mp4"
         _compose_segment(
             video_path=seg["video_path"],
-            audio_path=seg["audio_path"],
+            audio_path=seg.get("audio_path"),
             text=seg["text"],
             audio_duration=seg["audio_duration"],
             output_path=str(seg_path),
@@ -173,7 +174,7 @@ def compose_video(
 
 def _compose_segment(
     video_path: str,
-    audio_path: str,
+    audio_path: Optional[str],
     text: str,
     audio_duration: float,
     output_path: str,
@@ -184,9 +185,9 @@ def _compose_segment(
     """
     Compose a single segment:
     1. Crop/scale video to 9:16 (1080x1920)
-    2. Trim video to audio duration
+    2. Trim video to target duration
     3. Overlay subtitle text with selected style
-    4. Mix with TTS audio
+    4. Optionally mix with TTS audio if provided
     """
     # FFmpeg filter chain:
     # 1. Scale and crop to 9:16 (cover mode, no black bars)
@@ -262,23 +263,39 @@ def _compose_segment(
     if (video_provider or "").lower() == "nasa":
         video_input_options.extend(["-ss", str(NASA_INTRO_SKIP_SECONDS)])
 
-    cmd = [
-        "ffmpeg", "-y",
-        *video_input_options,          # Loop and optional intro trim for NASA clips
-        "-i", video_path,            # Input 0: video
-        "-i", audio_path,            # Input 1: TTS audio
-        "-filter_complex", filter_complex,
-        "-map", "[out]",
-        "-map", "1:a",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-t", str(audio_duration),   # Trim to audio duration
-        "-shortest",
-        output_path
-    ]
+    if audio_path:
+        cmd = [
+            "ffmpeg", "-y",
+            *video_input_options,          # Loop and optional intro trim for NASA clips
+            "-i", video_path,            # Input 0: video
+            "-i", audio_path,            # Input 1: TTS audio
+            "-filter_complex", filter_complex,
+            "-map", "[out]",
+            "-map", "1:a",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-t", str(audio_duration),   # Trim to target duration
+            "-shortest",
+            output_path
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            *video_input_options,
+            "-i", video_path,
+            "-filter_complex", filter_complex,
+            "-map", "[out]",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-an",                       # No audio for preview mode
+            "-t", str(audio_duration),
+            "-shortest",
+            output_path
+        ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:

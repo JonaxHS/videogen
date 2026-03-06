@@ -1171,6 +1171,29 @@ export default function App() {
         }
     }, [script, selectedVoice, rate, showSubtitles, subtitleStyle, selectedVideos])
 
+    const handlePreviewNoVoice = useCallback(async () => {
+        if (!script.trim()) return
+        setError(null)
+        setJob(null)
+        setLoading(true)
+
+        try {
+            const res = await apiPost<{ job_id: string; segments: Segment[] }>('/generate-preview', {
+                script,
+                show_subtitles: showSubtitles,
+                subtitle_style: subtitleStyle,
+                selected_videos: Object.fromEntries(
+                    Object.entries(selectedVideos).map(([k, v]) => [String(k), v])
+                ),
+            })
+            setSegments(res.segments)
+            setJobId(res.job_id)
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : 'Error desconocido')
+            setLoading(false)
+        }
+    }, [script, showSubtitles, subtitleStyle, selectedVideos])
+
     const handlePreviewVoice = async () => {
         setPlayingPreview(true)
         setError(null)
@@ -1422,16 +1445,26 @@ export default function App() {
                         </div>
                     </div>
 
-                    <button
-                        id="btn-generate"
-                        className="btn-generate"
-                        onClick={handleGenerate}
-                        disabled={!script.trim() || !!isRunning || !config?.configured}
-                    >
-                        {isRunning
-                            ? <><span className="status-dot running" />Generando...</>
-                            : <>✨ Generar Reel</>}
-                    </button>
+                    <div style={{ display: 'grid', gap: 10 }}>
+                        <button
+                            id="btn-generate"
+                            className="btn-generate"
+                            onClick={handleGenerate}
+                            disabled={!script.trim() || !!isRunning || !config?.configured}
+                        >
+                            {isRunning
+                                ? <><span className="status-dot running" />Generando...</>
+                                : <>✨ Generar Reel</>}
+                        </button>
+                        <button
+                            id="btn-preview-video"
+                            className="btn-secondary"
+                            onClick={handlePreviewNoVoice}
+                            disabled={!script.trim() || !!isRunning || !config?.configured}
+                        >
+                            👀 Previsualizar video (sin voz)
+                        </button>
+                    </div>
 
                     {!config?.configured && (
                         <div className="error-box" style={{ textAlign: 'center' }}>
