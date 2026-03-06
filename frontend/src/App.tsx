@@ -1110,6 +1110,17 @@ export default function App() {
                     }
                 }
 
+                // Auto-select the first video option for each segment if not already selected
+                setSelectedVideos(prev => {
+                    const updated = { ...prev }
+                    for (const seg of newSegs) {
+                        if (!updated[seg.id] && videosBySegId[seg.id]?.length > 0) {
+                            updated[seg.id] = videosBySegId[seg.id][0].url
+                        }
+                    }
+                    return updated
+                })
+
                 setVideoOptionsBySeg(videosBySegId)
             } catch {
                 // keep previous segments on transient parse errors
