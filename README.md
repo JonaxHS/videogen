@@ -1,11 +1,11 @@
 # VideoGen 🎬
 
-Generador de Reels con IA: pega tu guion, genera voz real, busca videos de stock (Pexels + Pixabay) con matching inteligente por contexto y sincroniza todo automáticamente.
+Generador de Reels con IA: pega tu guion, genera voz real, busca videos de stock (Pexels + Pixabay + NASA) con matching inteligente por contexto y sincroniza todo automáticamente.
 
 ## Stack
 - **Backend**: Python 3.11 + FastAPI + FFmpeg
 - **TTS**: [edge-tts](https://github.com/rany2/edge-tts) (voces neurales Microsoft, sin API key)
-- **Video Stock**: Pexels API + Pixabay API (gratis)
+- **Video Stock**: Pexels API + Pixabay API + NASA Image and Video Library
 - **Frontend**: React + Vite (TypeScript)
 - **Contenedores**: Docker + Docker Compose
 
@@ -37,7 +37,7 @@ docker compose up --build
 ### Matching inteligente de video
 
 - El buscador usa `keywords` y texto completo del párrafo para elegir clips más relevantes.
-- Combina resultados de Pexels y Pixabay y selecciona el mejor por relevancia + duración + resolución.
+- Combina resultados de Pexels, Pixabay y NASA y selecciona el mejor por relevancia + calidad.
 - El compositor adapta automáticamente videos horizontales o verticales al formato final 9:16.
 
 ## Variables de Entorno (.env)

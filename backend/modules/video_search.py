@@ -1,14 +1,16 @@
 """
-Video Search Module — Pexels + Pixabay APIs
+Video Search Module — Pexels + Pixabay + NASA APIs
 Searches and downloads stock video clips matching a keyword query.
 """
 import hashlib
 import re
 import requests
 from pathlib import Path
+from typing import Optional
 
 PEXELS_API_BASE = "https://api.pexels.com/videos"
 PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
+NASA_SEARCH_API = "https://images-api.nasa.gov/search"
 CACHE_DIR = Path("/app/cache/videos")
 
 STOP_WORDS = {
@@ -199,9 +201,6 @@ def search_and_download_video(
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    if not pexels_api_key and not pixabay_api_key:
-        raise RuntimeError("No video provider API key configured (Pexels or Pixabay)")
-
     options = search_video_options(
         keywords=keywords,
         pexels_api_key=pexels_api_key,
@@ -232,14 +231,15 @@ def search_video_options(
     exclude_urls: set[str] | None = None,
 ) -> list[dict]:
     """Return ranked video options from configured providers for manual segment replacement."""
-    if not pexels_api_key and not pixabay_api_key:
-        raise RuntimeError("No video provider API key configured (Pexels or Pixabay)")
+    # NASA is public (no API key required), so we always keep it as optional provider.
+    # If keys are missing, NASA can still return results.
 
     providers = []
     if pexels_api_key:
         providers.append(("pexels", pexels_api_key))
     if pixabay_api_key:
         providers.append(("pixabay", pixabay_api_key))
+    providers.append(("nasa", ""))
 
     exclude_urls = exclude_urls or set()
     effective_context = "" if global_search else context_text
@@ -264,9 +264,10 @@ def search_video_options(
 
     pexels_per_page = 40 if global_search else 20
     pixabay_per_page = 50 if global_search else 25
+    nasa_per_page = 14 if global_search else 8
 
     all_candidates = []
-    for query in query_candidates:
+    for query_index, query in enumerate(query_candidates):
         for provider_name, provider_key in providers:
             if provider_name == "pexels":
                 all_candidates.extend(
@@ -278,13 +279,25 @@ def search_video_options(
                         page=page,
                     )
                 )
-            else:
+            elif provider_name == "pixabay":
                 all_candidates.extend(
                     _search_pixabay_candidates(
                         query,
                         provider_key,
                         min_duration,
                         per_page=pixabay_per_page,
+                        page=page,
+                    )
+                )
+            else:
+                # NASA assets endpoint can be expensive; cap to top query candidates.
+                if query_index >= (4 if global_search else 3):
+                    continue
+                all_candidates.extend(
+                    _search_nasa_candidates(
+                        query,
+                        min_duration,
+                        per_page=nasa_per_page,
                         page=page,
                     )
                 )
@@ -547,6 +560,129 @@ def _search_pixabay_candidates(
         })
 
     return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
+
+
+def _search_nasa_candidates(
+    query: str,
+    min_duration: int,
+    per_page: int = 10,
+    page: int = 1,
+) -> list[dict]:
+    params = {
+        "q": query,
+        "media_type": "video",
+        "page": max(1, int(page)),
+    }
+
+    try:
+        resp = requests.get(NASA_SEARCH_API, params=params, timeout=20)
+        resp.raise_for_status()
+        payload = resp.json() or {}
+    except Exception as e:
+        print(f"[VideoSearch] NASA search request failed: {e}")
+        return []
+
+    items = (((payload.get("collection") or {}).get("items")) or [])
+    if not items:
+        return []
+
+    query_terms = _extract_terms(query)
+    candidates = []
+
+    for item in items[: max(1, per_page)]:
+        data_list = item.get("data") or []
+        data = data_list[0] if data_list else {}
+        nasa_id = str(data.get("nasa_id", "")).strip()
+        if not nasa_id:
+            continue
+
+        asset_url = _resolve_nasa_asset_video_url(nasa_id)
+        if not asset_url:
+            continue
+
+        links = item.get("links") or []
+        thumbnail = ""
+        for link in links:
+            href = str(link.get("href", ""))
+            if href and href.startswith("http"):
+                thumbnail = href
+                break
+
+        metadata_text = " ".join([
+            str(data.get("title", "")),
+            str(data.get("description", "")),
+            " ".join([str(k) for k in (data.get("keywords") or [])]),
+            query,
+        ])
+
+        relevance = _text_relevance_score(query_terms, metadata_text)
+        quality_bonus = 0.0
+        lower_url = asset_url.lower()
+        if "1080" in lower_url or "4k" in lower_url or "2160" in lower_url:
+            quality_bonus += 12.0
+        elif "720" in lower_url:
+            quality_bonus += 8.0
+        elif "480" in lower_url:
+            quality_bonus += 4.0
+
+        # NASA API doesn't reliably provide duration in search payload.
+        estimated_duration = max(min_duration, 8)
+        total_score = relevance * 14.0 + quality_bonus
+
+        candidates.append({
+            "provider": "nasa",
+            "url": asset_url,
+            "thumbnail": thumbnail,
+            "score": total_score,
+            "duration": estimated_duration,
+        })
+
+    return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
+
+
+def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
+    if not nasa_id:
+        return None
+
+    asset_endpoint = f"https://images-api.nasa.gov/asset/{nasa_id}"
+    try:
+        resp = requests.get(asset_endpoint, timeout=20)
+        resp.raise_for_status()
+        payload = resp.json() or {}
+    except Exception as e:
+        print(f"[VideoSearch] NASA asset request failed for {nasa_id}: {e}")
+        return None
+
+    items = (((payload.get("collection") or {}).get("items")) or [])
+    if not items:
+        return None
+
+    urls = []
+    for it in items:
+        href = str((it or {}).get("href", ""))
+        if href.startswith("http") and ".mp4" in href.lower():
+            urls.append(href)
+
+    if not urls:
+        return None
+
+    def quality_key(url: str) -> tuple[int, int]:
+        value = url.lower()
+        score = 0
+        if "orig" in value:
+            score += 50
+        if "4k" in value or "2160" in value:
+            score += 40
+        if "1080" in value:
+            score += 30
+        if "720" in value:
+            score += 20
+        if "480" in value:
+            score += 10
+        return score, len(url)
+
+    urls.sort(key=quality_key, reverse=True)
+    return urls[0]
 
 
 def _build_query_candidates(keywords: str, context_text: str, fallback_keywords: str) -> list[str]:
