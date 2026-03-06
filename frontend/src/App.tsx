@@ -203,8 +203,8 @@ function VideoReplacementModal({
                     exclude_urls: [],
                 })
                 setSearchResults(res.options || [])
-            } catch (e) {
-                setSearchResults([])
+            } catch {
+                // Keep previous results on transient failures
             } finally {
                 setSearchLoading(false)
             }
@@ -244,9 +244,7 @@ function VideoReplacementModal({
             }
             setSearchPage(nextPage)
         } catch {
-            if (!append) {
-                setSearchResults([])
-            }
+            // Keep current results on transient failures
         } finally {
             setSearchLoading(false)
         }
@@ -375,14 +373,6 @@ function VideoReplacementModal({
                             outline: 'none',
                             transition: 'all 0.2s',
                         }}
-                        onFocus={(e) => {
-                            (e.target as HTMLInputElement).style.borderColor = 'var(--accent)'
-                            (e.target as HTMLInputElement).style.background = 'rgba(255,255,255,0.08)'
-                        }}
-                        onBlur={(e) => {
-                            (e.target as HTMLInputElement).style.borderColor = 'var(--border)'
-                            (e.target as HTMLInputElement).style.background = 'rgba(255,255,255,0.05)'
-                        }}
                     />
 
                     <div style={{ display: 'flex', gap: 8 }}>
@@ -419,6 +409,27 @@ function VideoReplacementModal({
                             ➕ Buscar más
                         </button>
                     </div>
+
+                    <button
+                        onClick={() => {
+                            if (!previewUrl) return
+                            onPick(previewUrl)
+                        }}
+                        disabled={!previewUrl}
+                        style={{
+                            marginTop: 6,
+                            background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                            border: 'none',
+                            borderRadius: 8,
+                            color: 'white',
+                            fontWeight: 700,
+                            padding: '10px 12px',
+                            cursor: previewUrl ? 'pointer' : 'not-allowed',
+                            opacity: previewUrl ? 1 : 0.5,
+                        }}
+                    >
+                        ✅ Seleccionar video
+                    </button>
 
                     {(loading || searchLoading) && (
                         <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>⏳ Buscando videos...</div>
@@ -472,26 +483,6 @@ function VideoReplacementModal({
                         </div>
                     )}
 
-                    <button
-                        onClick={() => {
-                            if (!previewUrl) return
-                            onPick(previewUrl)
-                        }}
-                        disabled={!previewUrl}
-                        style={{
-                            marginTop: 6,
-                            background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
-                            border: 'none',
-                            borderRadius: 8,
-                            color: 'white',
-                            fontWeight: 700,
-                            padding: '10px 12px',
-                            cursor: previewUrl ? 'pointer' : 'not-allowed',
-                            opacity: previewUrl ? 1 : 0.5,
-                        }}
-                    >
-                        ✅ Seleccionar video
-                    </button>
                 </div>
             </div>
         </div>
