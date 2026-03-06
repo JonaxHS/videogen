@@ -151,6 +151,7 @@ class VideoOptionsRequest(BaseModel):
     prefer_nasa: bool = False
     page: int = 1
     exclude_urls: list[str] = Field(default_factory=list)
+    include_providers: list[str] = Field(default_factory=list)
 
 
 # ─────────────────────────────────────────────
@@ -620,6 +621,7 @@ def video_options(req: VideoOptionsRequest):
         prefer_nasa=bool(req.prefer_nasa),
         page=max(1, int(req.page)),
         exclude_urls=set(req.exclude_urls or []),
+        include_providers=set(req.include_providers or []),
     )
     return {"options": options}
 
@@ -725,6 +727,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             # 3. Download stock video
             job["message"] = f"Segmento {i + 1}/{total}: buscando video..."
             manual_url = selected_videos.get(str(seg.get("id", i)), "").strip()
+            selected_video: dict[str, Any] = {"skip_seconds": 0.0}
             if manual_url:
                 manual_provider = infer_provider_from_url(manual_url)
                 video_path = download_video_from_url(manual_url, provider_hint=manual_provider)

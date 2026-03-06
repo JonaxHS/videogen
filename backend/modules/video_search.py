@@ -440,6 +440,7 @@ def search_video_options(
     prefer_nasa: bool = False,
     page: int = 1,
     exclude_urls: set[str] | None = None,
+    include_providers: set[str] | None = None,
 ) -> list[dict]:
     """Return ranked video options from configured providers for manual segment replacement."""
     # Keep cache bounded even when requests reuse cached assets heavily.
@@ -448,13 +449,21 @@ def search_video_options(
     # NASA is public (no API key required), so we always keep it as optional provider.
     # If keys are missing, NASA can still return results.
 
+    requested_providers = {p.lower().strip() for p in (include_providers or set()) if str(p).strip()}
+    allowed_providers = requested_providers or {"pexels", "pixabay", "nasa", "esa"}
+
     providers = []
-    if pexels_api_key:
+    if "pexels" in allowed_providers and pexels_api_key:
         providers.append(("pexels", pexels_api_key))
-    if pixabay_api_key:
+    if "pixabay" in allowed_providers and pixabay_api_key:
         providers.append(("pixabay", pixabay_api_key))
-    providers.append(("nasa", ""))
-    providers.append(("esa", ""))
+    if "nasa" in allowed_providers:
+        providers.append(("nasa", ""))
+    if "esa" in allowed_providers:
+        providers.append(("esa", ""))
+
+    use_nasa = "nasa" in allowed_providers
+    use_esa = "esa" in allowed_providers
 
     exclude_urls = exclude_urls or set()
     effective_context = "" if global_search else context_text
@@ -513,30 +522,32 @@ def search_video_options(
     esa_per_page = nasa_per_page  # ESA gets same query volume as NASA
 
     if nasa_first:
-        # Search NASA
-        for query_index, query in enumerate(nasa_query_candidates):
-            if query_index >= max_nasa_queries:
-                break
-            all_candidates.extend(
-                _search_nasa_candidates(
-                    query,
-                    min_duration,
-                    per_page=nasa_per_page,
-                    page=page,
+        if use_nasa:
+            # Search NASA
+            for query_index, query in enumerate(nasa_query_candidates):
+                if query_index >= max_nasa_queries:
+                    break
+                all_candidates.extend(
+                    _search_nasa_candidates(
+                        query,
+                        min_duration,
+                        per_page=nasa_per_page,
+                        page=page,
+                    )
                 )
-            )
-        # Search ESA alongside NASA
-        for query_index, query in enumerate(nasa_query_candidates):
-            if query_index >= max_esa_queries:
-                break
-            all_candidates.extend(
-                _search_esa_candidates(
-                    query,
-                    min_duration,
-                    per_page=esa_per_page,
-                    page=page,
+        if use_esa:
+            # Search ESA alongside NASA
+            for query_index, query in enumerate(nasa_query_candidates):
+                if query_index >= max_esa_queries:
+                    break
+                all_candidates.extend(
+                    _search_esa_candidates(
+                        query,
+                        min_duration,
+                        per_page=esa_per_page,
+                        page=page,
+                    )
                 )
-            )
 
     for query_index, query in enumerate(query_candidates):
         for provider_name, provider_key in providers:
@@ -569,30 +580,32 @@ def search_video_options(
             break
 
     if not nasa_first:
-        # Search NASA
-        for query_index, query in enumerate(nasa_query_candidates):
-            if query_index >= (2 if quick_mode else max_nasa_queries):
-                break
-            all_candidates.extend(
-                _search_nasa_candidates(
-                    query,
-                    min_duration,
-                    per_page=nasa_per_page,
-                    page=page,
+        if use_nasa:
+            # Search NASA
+            for query_index, query in enumerate(nasa_query_candidates):
+                if query_index >= (2 if quick_mode else max_nasa_queries):
+                    break
+                all_candidates.extend(
+                    _search_nasa_candidates(
+                        query,
+                        min_duration,
+                        per_page=nasa_per_page,
+                        page=page,
+                    )
                 )
-            )
-        # Search ESA with same limits as NASA
-        for query_index, query in enumerate(nasa_query_candidates):
-            if query_index >= (2 if quick_mode else max_esa_queries):
-                break
-            all_candidates.extend(
-                _search_esa_candidates(
-                    query,
-                    min_duration,
-                    per_page=esa_per_page,
-                    page=page,
+        if use_esa:
+            # Search ESA with same limits as NASA
+            for query_index, query in enumerate(nasa_query_candidates):
+                if query_index >= (2 if quick_mode else max_esa_queries):
+                    break
+                all_candidates.extend(
+                    _search_esa_candidates(
+                        query,
+                        min_duration,
+                        per_page=esa_per_page,
+                        page=page,
+                    )
                 )
-            )
 
     best_by_url: dict[str, dict] = {}
     for candidate in all_candidates:
@@ -637,13 +650,16 @@ def search_video_options(
     if global_search and limited:
         space_in_limited = any((c.get("provider") in ("nasa", "esa")) for c in limited)
         if not space_in_limited:
-            space_candidates = [c for c in ranked if c.get("provider") in ("nasa", "esa")]
+            space_candidates = [
+                c for c in ranked
+                if (c.get("provider") == "nasa" and use_nasa) or (c.get("provider") == "esa" and use_esa)
+            ]
             if space_candidates:
                 # Replace the last item with the best NASA/ESA candidate for provider diversity
                 limited[-1] = space_candidates[0]
 
     # Last fallback: if NASA still didn't yield anything and result set is empty, run a broad NASA query.
-    if not limited:
+    if not limited and use_nasa:
         fallback_nasa = _search_nasa_candidates(
             "nasa astronomy deep space",
             min_duration=min_duration,

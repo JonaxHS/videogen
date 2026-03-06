@@ -125,9 +125,20 @@ function VideoReplacementModal({
     const [searchQuery, setSearchQuery] = useState<string>('')
     const [searchResults, setSearchResults] = useState<VideoOption[]>([])
     const [defaultGlobalOptions, setDefaultGlobalOptions] = useState<VideoOption[]>([])
+    const [selectedProviders, setSelectedProviders] = useState<string[]>(['pexels', 'pixabay', 'nasa', 'esa'])
     const [searchPage, setSearchPage] = useState(1)
     const [searchLoading, setSearchLoading] = useState(false)
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const toggleProvider = (provider: string) => {
+        setSelectedProviders(prev => {
+            if (prev.includes(provider)) {
+                if (prev.length <= 1) return prev
+                return prev.filter(p => p !== provider)
+            }
+            return [...prev, provider]
+        })
+    }
 
     // Reset preview URL when segment changes
     useEffect(() => {
@@ -166,6 +177,7 @@ function VideoReplacementModal({
                     prefer_nasa: true,
                     page: 1,
                     exclude_urls: [],
+                    include_providers: selectedProviders,
                 })
                 if (!cancelled) {
                     setDefaultGlobalOptions(res.options || [])
@@ -188,7 +200,7 @@ function VideoReplacementModal({
         return () => {
             cancelled = true
         }
-    }, [isOpen, segment])
+    }, [isOpen, segment, selectedProviders])
 
     // Debounced search handler
     const handleSearchInput = (query: string) => {
@@ -216,6 +228,7 @@ function VideoReplacementModal({
                     prefer_nasa: true,
                     page: 1,
                     exclude_urls: [],
+                    include_providers: selectedProviders,
                 })
                 setSearchResults(res.options || [])
             } catch {
@@ -242,6 +255,7 @@ function VideoReplacementModal({
                 prefer_nasa: true,
                 page: nextPage,
                 exclude_urls: [],
+                include_providers: selectedProviders,
             })
             const incoming = res.options || []
             if (append) {
@@ -368,6 +382,34 @@ function VideoReplacementModal({
                     </div>
 
                     {/* Search Input */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {[
+                            { id: 'pexels', label: 'Pexels' },
+                            { id: 'pixabay', label: 'Pixabay' },
+                            { id: 'nasa', label: 'NASA' },
+                            { id: 'esa', label: 'ESA' },
+                        ].map(provider => {
+                            const active = selectedProviders.includes(provider.id)
+                            return (
+                                <button
+                                    key={provider.id}
+                                    onClick={() => toggleProvider(provider.id)}
+                                    style={{
+                                        background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
+                                        border: `1px solid ${active ? '#3b82f6' : 'var(--border)'}`,
+                                        color: 'var(--text)',
+                                        borderRadius: 999,
+                                        padding: '6px 10px',
+                                        fontSize: 12,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    {active ? '✅' : '◻️'} {provider.label}
+                                </button>
+                            )
+                        })}
+                    </div>
+
                     <input
                         type="text"
                         placeholder="🔍 Buscar globalmente (Pexels + Pixabay)..."
