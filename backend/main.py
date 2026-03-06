@@ -709,6 +709,25 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
     job_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        def _copy_video_to_job(source_path: str, destination_path: str, source_url: str = "", provider_hint: str = "manual") -> str:
+            if source_path == destination_path:
+                if not Path(destination_path).exists() and source_url:
+                    redownloaded = download_video_from_url(source_url, provider_hint=provider_hint)
+                    if redownloaded != destination_path:
+                        shutil.copy2(redownloaded, destination_path)
+                return destination_path
+
+            try:
+                shutil.copy2(source_path, destination_path)
+                return destination_path
+            except FileNotFoundError:
+                if not source_url:
+                    raise
+                redownloaded = download_video_from_url(source_url, provider_hint=provider_hint)
+                if redownloaded != destination_path:
+                    shutil.copy2(redownloaded, destination_path)
+                return destination_path
+
         job["status"] = "running"
         total = len(segments)
         composed_segments = []
@@ -752,8 +771,12 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 manual_provider = infer_provider_from_url(manual_url)
                 source_video_path = download_video_from_url(manual_url, provider_hint=manual_provider)
                 video_path = str(job_dir / f"video_{i:03d}.mp4")
-                if source_video_path != video_path:
-                    shutil.copy2(source_video_path, video_path)
+                video_path = _copy_video_to_job(
+                    source_path=source_video_path,
+                    destination_path=video_path,
+                    source_url=manual_url,
+                    provider_hint=manual_provider,
+                )
                 video_provider = manual_provider
                 selected_video_url = manual_url
             else:
@@ -768,10 +791,14 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 )
                 source_video_path = auto_video_result["path"]
                 video_path = str(job_dir / f"video_{i:03d}.mp4")
-                if source_video_path != video_path:
-                    shutil.copy2(source_video_path, video_path)
                 video_provider = auto_video_result.get("provider", "manual")
                 selected_video_url = auto_video_result.get("url", "")
+                video_path = _copy_video_to_job(
+                    source_path=source_video_path,
+                    destination_path=video_path,
+                    source_url=selected_video_url,
+                    provider_hint=video_provider,
+                )
                 video_skip_seconds = float(auto_video_result.get("skip_seconds", 0.0) or 0.0)
 
             # Track selected clip to avoid repetition in next segments
