@@ -122,8 +122,10 @@ def parse_script(script: str) -> List[Dict]:
 def extract_keywords(text: str) -> str:
     """
     Extract meaningful keywords from a text segment for stock video search.
-    Uses simple heuristics: removes stop words and keeps nouns/significant words.
+    Captures key phrases, technical terms, and context to differentiate similar topics.
     """
+    text_lower = text.lower()
+    
     # Spanish stop words (common ones)
     stop_words = {
         'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
@@ -136,24 +138,115 @@ def extract_keywords(text: str) -> str:
         'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
         'to', 'for', 'of', 'with', 'is', 'are', 'was', 'were',
     }
-
-    # Tokenize: split on spaces and punctuation (min 3 chars to avoid articles)
-    words = re.findall(r'\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑA-Za-z]{3,}\b', text)
-    keywords = [w.lower() for w in words if w.lower() not in stop_words]
-
-    # Deduplicate while preserving order (keep first 6 for better search coverage)
+    
+    # Priority key phrases (2-3 words) that should be kept together
+    key_phrases = []
+    phrase_patterns = [
+        # Science/Physics
+        r'agujero negro', r'black hole', r'agujero de gusano', r'wormhole',
+        r'relatividad (general|especial)', r'general relativity', r'special relativity',
+        r'curvas? cerradas? de tiempo', r'closed timelike curve', 
+        r'dilatación del tiempo', r'time dilation', r'espacio-?tiempo', r'spacetime',
+        r'velocidad de la luz', r'speed of light', r'gravedad extrema',
+        r'cilindro cósmico', r'cosmic cylinder', r'universo rotante', r'rotating universe',
+        # Time concepts
+        r'viajar al (pasado|futuro)', r'time travel', r'viaje en el tiempo',
+        r'máquina del tiempo', r'línea temporal', r'timeline',
+        # Tech/Science concepts
+        r'modelo de gödel', r'hipótesis de consistencia', r'protección cronológica',
+        r'paradoja temporal', r'paradox', r'multiverso', r'multiverse',
+        r'radiación de vacío', r'vacuum radiation', r'física cuántica', r'quantum',
+        r'relojes? atómicos?', r'atomic clock', r'gps', r'muones?',
+        # Visual concepts
+        r'experimento', r'observación', r'medición', r'measurement',
+    ]
+    
+    for pattern in phrase_patterns:
+        matches = re.findall(pattern, text_lower)
+        for match in matches:
+            if isinstance(match, tuple):
+                phrase = " ".join([m for m in match if m])
+            else:
+                phrase = match
+            if phrase and phrase not in key_phrases:
+                key_phrases.append(phrase)
+    
+    # Detect temporal direction for better video matching
+    temporal_context = []
+    if any(word in text_lower for word in ['pasado', 'past', 'atrás', 'regres', 'volver', 'antes']):
+        temporal_context.append('pasado')
+    if any(word in text_lower for word in ['futuro', 'future', 'adelante', 'avanz', 'próximo', 'después']):
+        temporal_context.append('futuro')
+    if any(word in text_lower for word in ['paradoja', 'paradox', 'imposible', 'contradicción']):
+        temporal_context.append('paradoja')
+    
+    # Extract individual important technical/scientific terms
+    important_terms = []
+    technical_patterns = [
+        r'\b(einstein|hawking|gödel|minkowski)\b',
+        r'\b(relatividad|relativity|cuántica?|quantum)\b',
+        r'\b(gravedad|gravity|masa|materia|energía|energy)\b',
+        r'(espacio|space|tiempo|time|dimensión|dimension)',
+        r'\b(luz|light|velocidad|speed|rápido|fast)\b',
+        r'\b(universo|universe|cosmos|cósmico?)\b',
+        r'\b(partícula|particle|átomo|atom|muón|muon)\b',
+        r'\b(observ|medición|measurement|experimento|experiment)\b',
+        r'\b(científico|science|física|physics|teoría|theory)\b',
+        r'\b(tecnología|technology|máquina|machine|dispositivo)\b',
+    ]
+    
+    for pattern in technical_patterns:
+        matches = re.findall(pattern, text_lower)
+        for match in matches:
+            if match and match not in stop_words:
+                important_terms.append(match)
+    
+    # Extract regular keywords (nouns and significant words)
+    words = re.findall(r'\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑA-Za-z]{3,}\b', text_lower)
+    regular_keywords = [w for w in words if w not in stop_words]
+    
+    # Build final keyword list with priority order:
+    # 1. Temporal context (pasado/futuro/paradoja)
+    # 2. Key phrases (agujero negro, relatividad general, etc.)
+    # 3. Important technical terms
+    # 4. Regular keywords
+    
+    final_keywords = []
     seen = set()
-    unique = []
-    for kw in keywords:
+    
+    # Add temporal context first (critical for differentiation)
+    for term in temporal_context:
+        if term not in seen:
+            seen.add(term)
+            final_keywords.append(term)
+    
+    # Add key phrases (max 2-3 to avoid over-constraining)
+    for phrase in key_phrases[:3]:
+        words_in_phrase = phrase.split()
+        for word in words_in_phrase:
+            if word not in seen and word not in stop_words:
+                seen.add(word)
+                final_keywords.append(word)
+    
+    # Add important technical terms
+    for term in important_terms:
+        if term not in seen:
+            seen.add(term)
+            final_keywords.append(term)
+        if len(final_keywords) >= 10:
+            break
+    
+    # Fill with regular keywords if needed
+    for kw in regular_keywords:
         if kw not in seen:
             seen.add(kw)
-            unique.append(kw)
-        if len(unique) >= 6:
+            final_keywords.append(kw)
+        if len(final_keywords) >= 12:
             break
-
+    
     # Fallback to first content words if nothing found
-    if not unique:
+    if not final_keywords:
         all_words = [w.lower() for w in text.split()[:5]]
-        unique = all_words if all_words else ['video']
-
-    return ' '.join(unique)
+        final_keywords = all_words if all_words else ['video']
+    
+    return ' '.join(final_keywords[:12])
