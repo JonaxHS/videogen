@@ -152,6 +152,7 @@ class VideoOptionsRequest(BaseModel):
     page: int = 1
     exclude_urls: list[str] = Field(default_factory=list)
     include_providers: list[str] = Field(default_factory=list)
+    search_seed: str = ""
 
 
 # ─────────────────────────────────────────────
@@ -622,6 +623,7 @@ def video_options(req: VideoOptionsRequest):
         page=max(1, int(req.page)),
         exclude_urls=set(req.exclude_urls or []),
         include_providers=set(req.include_providers or []),
+        search_seed=(req.search_seed or "").strip(),
     )
     return {"options": options}
 

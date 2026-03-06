@@ -126,6 +126,7 @@ function VideoReplacementModal({
     const [searchResults, setSearchResults] = useState<VideoOption[]>([])
     const [defaultGlobalOptions, setDefaultGlobalOptions] = useState<VideoOption[]>([])
     const [selectedProviders, setSelectedProviders] = useState<string[]>(['pexels', 'pixabay', 'nasa', 'esa'])
+    const [searchSeed, setSearchSeed] = useState<string>(() => String(Date.now()))
     const [searchPage, setSearchPage] = useState(1)
     const [searchLoading, setSearchLoading] = useState(false)
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -140,6 +141,12 @@ function VideoReplacementModal({
         })
     }
 
+    const selectAllProviders = () => {
+        setSelectedProviders(['pexels', 'pixabay', 'nasa', 'esa'])
+    }
+
+    const makeFreshSeed = () => String(Date.now() + Math.floor(Math.random() * 10000))
+
     // Reset preview URL when segment changes
     useEffect(() => {
         if (isOpen && segment) {
@@ -147,6 +154,7 @@ function VideoReplacementModal({
             setSearchQuery('')
             setSearchResults([])
             setSearchPage(1)
+            setSearchSeed(makeFreshSeed())
         }
     }, [segment?.id, isOpen, selectedUrl])
 
@@ -178,6 +186,7 @@ function VideoReplacementModal({
                     page: 1,
                     exclude_urls: [],
                     include_providers: selectedProviders,
+                    search_seed: searchSeed,
                 })
                 if (!cancelled) {
                     setDefaultGlobalOptions(res.options || [])
@@ -200,7 +209,7 @@ function VideoReplacementModal({
         return () => {
             cancelled = true
         }
-    }, [isOpen, segment, selectedProviders])
+    }, [isOpen, segment, selectedProviders, searchSeed])
 
     // Debounced search handler
     const handleSearchInput = (query: string) => {
@@ -217,6 +226,8 @@ function VideoReplacementModal({
         }
 
         setSearchLoading(true)
+        const freshSeed = makeFreshSeed()
+        setSearchSeed(freshSeed)
         searchTimeoutRef.current = setTimeout(async () => {
             try {
                 const res = await apiPost<VideoOptionsResponse>('/video-options', {
@@ -227,8 +238,9 @@ function VideoReplacementModal({
                     global_search: true,
                     prefer_nasa: true,
                     page: 1,
-                    exclude_urls: [],
+                    exclude_urls: displayOptions.map(o => o.url),
                     include_providers: selectedProviders,
+                    search_seed: freshSeed,
                 })
                 setSearchResults(res.options || [])
             } catch {
@@ -239,13 +251,14 @@ function VideoReplacementModal({
         }, 500) // 500ms debounce
     }
 
-    const runSearch = async (append: boolean) => {
+    const runSearch = async (append: boolean, forcedSeed?: string) => {
         const query = searchQuery.trim()
         if (!query) return
 
         const nextPage = append ? searchPage + 1 : 1
         setSearchLoading(true)
         try {
+            const seedToUse = forcedSeed || searchSeed
             const res = await apiPost<VideoOptionsResponse>('/video-options', {
                 keywords: query,
                 context_text: '',
@@ -254,8 +267,9 @@ function VideoReplacementModal({
                 global_search: true,
                 prefer_nasa: true,
                 page: nextPage,
-                exclude_urls: [],
+                exclude_urls: displayOptions.map(o => o.url),
                 include_providers: selectedProviders,
+                search_seed: seedToUse,
             })
             const incoming = res.options || []
             if (append) {
@@ -382,6 +396,24 @@ function VideoReplacementModal({
                     </div>
 
                     {/* Search Input */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.9 }}>Filtrar proveedores</div>
+                        <button
+                            onClick={selectAllProviders}
+                            style={{
+                                background: 'none',
+                                border: '1px solid var(--border)',
+                                borderRadius: 999,
+                                color: 'var(--text-2)',
+                                fontSize: 11,
+                                padding: '4px 8px',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            Todos
+                        </button>
+                    </div>
+
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                         {[
                             { id: 'pexels', label: 'Pexels' },
@@ -465,6 +497,26 @@ function VideoReplacementModal({
                             }}
                         >
                             ➕ Buscar más
+                        </button>
+                        <button
+                            onClick={() => {
+                                const nextSeed = makeFreshSeed()
+                                setSearchSeed(nextSeed)
+                                runSearch(false, nextSeed)
+                            }}
+                            disabled={!searchQuery.trim() || searchLoading}
+                            style={{
+                                flex: 1,
+                                background: 'rgba(16,185,129,0.15)',
+                                border: '1px solid var(--border)',
+                                borderRadius: 6,
+                                color: 'var(--text)',
+                                padding: '8px 10px',
+                                cursor: !searchQuery.trim() || searchLoading ? 'not-allowed' : 'pointer',
+                                opacity: !searchQuery.trim() || searchLoading ? 0.6 : 1,
+                            }}
+                        >
+                            🎲 Variar
                         </button>
                     </div>
 

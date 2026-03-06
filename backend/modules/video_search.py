@@ -7,6 +7,7 @@ import hashlib
 import re
 import os
 import json
+import random
 import requests
 from pathlib import Path
 from typing import Optional
@@ -441,6 +442,7 @@ def search_video_options(
     page: int = 1,
     exclude_urls: set[str] | None = None,
     include_providers: set[str] | None = None,
+    search_seed: str = "",
 ) -> list[dict]:
     """Return ranked video options from configured providers for manual segment replacement."""
     # Keep cache bounded even when requests reuse cached assets heavily.
@@ -634,6 +636,30 @@ def search_video_options(
         ),
         reverse=True,
     )
+
+    # Optional diversity for manual replacement UI: keep quality but avoid identical top ordering.
+    if search_seed and ranked:
+        window = min(40, len(ranked))
+        top_window = ranked[:window]
+        tail = ranked[window:]
+
+        # Stable per request seed so same request is deterministic, different seed yields variety.
+        seeded = []
+        for candidate in top_window:
+            key_raw = f"{search_seed}|{candidate.get('url', '')}".encode()
+            key_val = int(hashlib.md5(key_raw).hexdigest()[:8], 16)
+            jitter = (key_val % 1000) / 1000.0  # 0..0.999
+            seeded.append((candidate, jitter))
+
+        # Mostly preserve score, but break repetition when scores are close.
+        seeded.sort(
+            key=lambda item: (
+                item[0].get("score", 0) + (item[1] * 0.6),
+                item[0].get("provider", ""),
+            ),
+            reverse=True,
+        )
+        ranked = [item[0] for item in seeded] + tail
 
     # Optional Qwen reranker: improve final pick quality for low-limit selections
     # (e.g. automatic segment generation where limit=1).
