@@ -491,8 +491,11 @@ def search_video_options(
 
     nasa_first = prefer_nasa or global_search
     max_nasa_queries = 3 if quick_mode else (12 if (global_search or prefer_nasa) else 5)
+    max_esa_queries = max_nasa_queries  # ESA gets same priority as NASA
+    esa_per_page = nasa_per_page  # ESA gets same query volume as NASA
 
     if nasa_first:
+        # Search NASA
         for query_index, query in enumerate(nasa_query_candidates):
             if query_index >= max_nasa_queries:
                 break
@@ -501,6 +504,18 @@ def search_video_options(
                     query,
                     min_duration,
                     per_page=nasa_per_page,
+                    page=page,
+                )
+            )
+        # Search ESA alongside NASA
+        for query_index, query in enumerate(nasa_query_candidates):
+            if query_index >= max_esa_queries:
+                break
+            all_candidates.extend(
+                _search_esa_candidates(
+                    query,
+                    min_duration,
+                    per_page=esa_per_page,
                     page=page,
                 )
             )
@@ -536,6 +551,7 @@ def search_video_options(
             break
 
     if not nasa_first:
+        # Search NASA
         for query_index, query in enumerate(nasa_query_candidates):
             if query_index >= (2 if quick_mode else max_nasa_queries):
                 break
@@ -547,10 +563,9 @@ def search_video_options(
                     page=page,
                 )
             )
-        # ESA (European Space Agency) videos
-        esa_per_page = 4 if quick_mode else (12 if global_search else 6)
+        # Search ESA with same limits as NASA
         for query_index, query in enumerate(nasa_query_candidates):
-            if query_index >= (1 if quick_mode else 3):
+            if query_index >= (2 if quick_mode else max_esa_queries):
                 break
             all_candidates.extend(
                 _search_esa_candidates(
@@ -583,21 +598,21 @@ def search_video_options(
     ranked = sorted(
         best_by_url.values(),
         key=lambda c: (
-            2 if (prefer_nasa and c.get("provider") == "nasa") else (1 if c.get("provider") == "nasa" else 0),
+            2 if (prefer_nasa and c.get("provider") in ("nasa", "esa")) else (1 if c.get("provider") in ("nasa", "esa") else 0),
             c.get("score", 0),
         ),
         reverse=True,
     )
     limited = ranked[: max(1, limit)]
 
-    # Ensure NASA appears in global searches when available (useful for astronomy-focused reels)
+    # Ensure NASA/ESA appears in global searches when available (useful for astronomy-focused reels)
     if global_search and limited:
-        nasa_in_limited = any((c.get("provider") == "nasa") for c in limited)
-        if not nasa_in_limited:
-            nasa_candidates = [c for c in ranked if c.get("provider") == "nasa"]
-            if nasa_candidates:
-                # Replace the last item with the best NASA candidate for provider diversity
-                limited[-1] = nasa_candidates[0]
+        space_in_limited = any((c.get("provider") in ("nasa", "esa")) for c in limited)
+        if not space_in_limited:
+            space_candidates = [c for c in ranked if c.get("provider") in ("nasa", "esa")]
+            if space_candidates:
+                # Replace the last item with the best NASA/ESA candidate for provider diversity
+                limited[-1] = space_candidates[0]
 
     # Last fallback: if NASA still didn't yield anything and result set is empty, run a broad NASA query.
     if not limited:
