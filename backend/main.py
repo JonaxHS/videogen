@@ -112,6 +112,7 @@ class VideoOptionsRequest(BaseModel):
     context_text: str = ""
     min_duration: int = 5
     limit: int = 8
+    global_search: bool = False
     exclude_urls: list[str] = Field(default_factory=list)
 
 
@@ -349,7 +350,8 @@ def video_options(req: VideoOptionsRequest):
         pixabay_api_key=PIXABAY_API_KEY,
         context_text=req.context_text,
         min_duration=max(3, int(req.min_duration)),
-        limit=max(1, min(20, int(req.limit))),
+        limit=max(1, min(50, int(req.limit))),
+        global_search=bool(req.global_search),
         exclude_urls=set(req.exclude_urls or []),
     )
     return {"options": options}

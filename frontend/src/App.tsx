@@ -111,6 +111,7 @@ function VideoReplacementModal({
     const [previewUrl, setPreviewUrl] = useState<string>('')
     const [searchQuery, setSearchQuery] = useState<string>('')
     const [searchResults, setSearchResults] = useState<VideoOption[]>([])
+    const [defaultGlobalOptions, setDefaultGlobalOptions] = useState<VideoOption[]>([])
     const [searchLoading, setSearchLoading] = useState(false)
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -121,13 +122,56 @@ function VideoReplacementModal({
             setSearchQuery('')
             setSearchResults([])
         }
-    }, [segment?.id, isOpen])
+    }, [segment?.id, isOpen, selectedUrl])
 
     useEffect(() => {
-        if (options.length > 0 && !previewUrl && isOpen) {
-            setPreviewUrl(options[0].url)
+        if (!isOpen) return
+        if (!previewUrl) {
+            const initial = selectedUrl || options[0]?.url || ''
+            if (initial) {
+                setPreviewUrl(initial)
+            }
         }
-    }, [options, previewUrl, isOpen])
+    }, [options, previewUrl, isOpen, selectedUrl])
+
+    useEffect(() => {
+        if (!isOpen || !segment) return
+
+        let cancelled = false
+
+        const loadGlobalOptions = async () => {
+            setSearchLoading(true)
+            try {
+                const res = await apiPost<VideoOptionsResponse>('/video-options', {
+                    keywords: segment.keywords || segment.text,
+                    context_text: '',
+                    min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
+                    limit: 30,
+                    global_search: true,
+                    exclude_urls: [],
+                })
+                if (!cancelled) {
+                    setDefaultGlobalOptions(res.options || [])
+                    if (!previewUrl && res.options && res.options.length > 0) {
+                        setPreviewUrl(res.options[0].url)
+                    }
+                }
+            } catch {
+                if (!cancelled) {
+                    setDefaultGlobalOptions([])
+                }
+            } finally {
+                if (!cancelled) {
+                    setSearchLoading(false)
+                }
+            }
+        }
+
+        loadGlobalOptions()
+        return () => {
+            cancelled = true
+        }
+    }, [isOpen, segment])
 
     // Debounced search handler
     const handleSearch = (query: string) => {
@@ -147,9 +191,10 @@ function VideoReplacementModal({
             try {
                 const res = await apiPost<VideoOptionsResponse>('/video-options', {
                     keywords: query,
-                    context_text: segment?.text || '',
+                    context_text: '',
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
-                    limit: 12,
+                    limit: 30,
+                    global_search: true,
                     exclude_urls: [],
                 })
                 setSearchResults(res.options || [])
@@ -161,7 +206,11 @@ function VideoReplacementModal({
         }, 500) // 500ms debounce
     }
 
-    const displayOptions = searchQuery.trim() ? searchResults : options
+    const displayOptions = searchQuery.trim()
+        ? searchResults
+        : (defaultGlobalOptions.length > 0 ? defaultGlobalOptions : options)
+
+    const selectedPreviewOption = displayOptions.find(o => o.url === previewUrl)
 
     if (!isOpen || !segment) return null
 
@@ -218,6 +267,26 @@ function VideoReplacementModal({
                     <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
                         {segment.text}
                     </div>
+                    <button
+                        onClick={() => {
+                            if (!previewUrl) return
+                            onPick(previewUrl)
+                        }}
+                        disabled={!previewUrl}
+                        style={{
+                            marginTop: 'auto',
+                            background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                            border: 'none',
+                            borderRadius: 8,
+                            color: 'white',
+                            fontWeight: 700,
+                            padding: '10px 12px',
+                            cursor: previewUrl ? 'pointer' : 'not-allowed',
+                            opacity: previewUrl ? 1 : 0.5,
+                        }}
+                    >
+                        ✅ Usar este video
+                    </button>
                 </div>
 
                 {/* Options side */}
@@ -241,7 +310,7 @@ function VideoReplacementModal({
                     {/* Search Input */}
                     <input
                         type="text"
-                        placeholder="🔍 Buscar videos..."
+                        placeholder="🔍 Buscar globalmente (Pexels + Pixabay)..."
                         value={searchQuery}
                         onChange={(e) => handleSearch(e.target.value)}
                         style={{
@@ -268,6 +337,12 @@ function VideoReplacementModal({
                         <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>⏳ Buscando videos...</div>
                     )}
 
+                    {!loading && !searchLoading && previewUrl && (
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>
+                            Vista previa: {selectedPreviewOption?.provider || 'video seleccionado'} · {selectedPreviewOption?.duration || '?'}s
+                        </div>
+                    )}
+
                     {!loading && !searchLoading && displayOptions.length === 0 && (
                         <div style={{ fontSize: 12, textAlign: 'center', opacity: 0.7 }}>
                             {searchQuery.trim() ? 'No se encontraron videos' : 'No hay opciones de video'}
@@ -281,7 +356,6 @@ function VideoReplacementModal({
                                     key={opt.url}
                                     onClick={() => {
                                         setPreviewUrl(opt.url)
-                                        onPick(opt.url)
                                     }}
                                     style={{
                                         background: previewUrl === opt.url ? 'var(--accent)' : 'rgba(255,255,255,0.05)',

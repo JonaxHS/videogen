@@ -227,6 +227,7 @@ def search_video_options(
     min_duration: int = 5,
     fallback_keywords: str = "nature landscape",
     limit: int = 8,
+    global_search: bool = False,
     exclude_urls: set[str] | None = None,
 ) -> list[dict]:
     """Return ranked video options from configured providers for manual segment replacement."""
@@ -240,15 +241,36 @@ def search_video_options(
         providers.append(("pixabay", pixabay_api_key))
 
     exclude_urls = exclude_urls or set()
-    query_candidates = _build_query_candidates(keywords, context_text, fallback_keywords)
+    effective_context = "" if global_search else context_text
+    effective_fallback = (
+        "cinematic broll nature technology city abstract"
+        if global_search and not (fallback_keywords or "").strip()
+        else fallback_keywords
+    )
+    query_candidates = _build_query_candidates(keywords, effective_context, effective_fallback)
+
+    if global_search:
+        extra_global = [
+            "cinematic broll",
+            "abstract background",
+            "nature landscape",
+            "city night",
+            "technology future",
+        ]
+        for query in extra_global:
+            if query not in query_candidates:
+                query_candidates.append(query)
+
+    pexels_per_page = 40 if global_search else 20
+    pixabay_per_page = 50 if global_search else 25
 
     all_candidates = []
     for query in query_candidates:
         for provider_name, provider_key in providers:
             if provider_name == "pexels":
-                all_candidates.extend(_search_pexels_candidates(query, provider_key, min_duration))
+                all_candidates.extend(_search_pexels_candidates(query, provider_key, min_duration, per_page=pexels_per_page))
             else:
-                all_candidates.extend(_search_pixabay_candidates(query, provider_key, min_duration))
+                all_candidates.extend(_search_pixabay_candidates(query, provider_key, min_duration, per_page=pixabay_per_page))
 
     best_by_url: dict[str, dict] = {}
     for candidate in all_candidates:
