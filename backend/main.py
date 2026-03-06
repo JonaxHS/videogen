@@ -29,6 +29,11 @@ PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_DEFAULT_VOICE = os.getenv("TELEGRAM_DEFAULT_VOICE", DEFAULT_VOICE)
+TELEGRAM_DEFAULT_RATE = os.getenv("TELEGRAM_DEFAULT_RATE", "+0%")
+TELEGRAM_DEFAULT_PITCH = os.getenv("TELEGRAM_DEFAULT_PITCH", "+0Hz")
+TELEGRAM_DEFAULT_SHOW_SUBTITLES = os.getenv("TELEGRAM_DEFAULT_SHOW_SUBTITLES", "true").lower() != "false"
+TELEGRAM_DEFAULT_SUBTITLE_STYLE = os.getenv("TELEGRAM_DEFAULT_SUBTITLE_STYLE", "classic")
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
@@ -90,6 +95,14 @@ class VoicePreviewRequest(BaseModel):
     pitch: str = "+0Hz"
 
 
+class PreferencesRequest(BaseModel):
+    voice: str = DEFAULT_VOICE
+    rate: str = "+0%"
+    pitch: str = "+0Hz"
+    show_subtitles: bool = True
+    subtitle_style: str = "classic"
+
+
 class ParseRequest(BaseModel):
     script: str
 
@@ -132,11 +145,51 @@ def get_config():
     }
 
 
+@app.get("/api/preferences")
+def get_preferences():
+    """Return current default generation preferences used by Telegram bot and web defaults sync."""
+    return {
+        "voice": TELEGRAM_DEFAULT_VOICE,
+        "rate": TELEGRAM_DEFAULT_RATE,
+        "pitch": TELEGRAM_DEFAULT_PITCH,
+        "show_subtitles": TELEGRAM_DEFAULT_SHOW_SUBTITLES,
+        "subtitle_style": TELEGRAM_DEFAULT_SUBTITLE_STYLE,
+    }
+
+
+@app.post("/api/preferences")
+def save_preferences(req: PreferencesRequest):
+    """Persist default generation preferences to .env for bot/web synchronization."""
+    voice = (req.voice or "").strip() or DEFAULT_VOICE
+    rate = (req.rate or "").strip() or "+0%"
+    pitch = (req.pitch or "").strip() or "+0Hz"
+    subtitle_style = (req.subtitle_style or "").strip() or "classic"
+
+    _write_env({
+        "TELEGRAM_DEFAULT_VOICE": voice,
+        "TELEGRAM_DEFAULT_RATE": rate,
+        "TELEGRAM_DEFAULT_PITCH": pitch,
+        "TELEGRAM_DEFAULT_SHOW_SUBTITLES": "true" if req.show_subtitles else "false",
+        "TELEGRAM_DEFAULT_SUBTITLE_STYLE": subtitle_style,
+    })
+    _reload_env_globals()
+
+    return {
+        "success": True,
+        "message": "Preferencias guardadas",
+        "preferences": {
+            "voice": TELEGRAM_DEFAULT_VOICE,
+            "rate": TELEGRAM_DEFAULT_RATE,
+            "pitch": TELEGRAM_DEFAULT_PITCH,
+            "show_subtitles": TELEGRAM_DEFAULT_SHOW_SUBTITLES,
+            "subtitle_style": TELEGRAM_DEFAULT_SUBTITLE_STYLE,
+        },
+    }
+
+
 @app.post("/api/setup")
 def setup(req: SetupRequest):
     """Save configuration to .env file and reload env vars."""
-    global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, TELEGRAM_BOT_TOKEN
-
     # Only update non-empty keys (preserve existing if user leaves blank)
     new_pexels = req.pexels_api_key.strip()
     new_pixabay = req.pixabay_api_key.strip()
@@ -172,12 +225,7 @@ def setup(req: SetupRequest):
     })
 
     # Reload in-process
-    load_dotenv(dotenv_path=ENV_FILE, override=True)
-    PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
-    PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
-    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-    DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    _reload_env_globals()
 
     return {"success": True, "message": "Configuración guardada correctamente"}
 
@@ -191,6 +239,24 @@ def _write_env(updates: dict):
     with open(ENV_FILE, "w") as f:
         for k, v in existing.items():
             f.write(f"{k}={v}\n")
+
+
+def _reload_env_globals():
+    global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, TELEGRAM_BOT_TOKEN
+    global TELEGRAM_DEFAULT_VOICE, TELEGRAM_DEFAULT_RATE, TELEGRAM_DEFAULT_PITCH
+    global TELEGRAM_DEFAULT_SHOW_SUBTITLES, TELEGRAM_DEFAULT_SUBTITLE_STYLE
+
+    load_dotenv(dotenv_path=ENV_FILE, override=True)
+    PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+    PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
+    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+    DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_DEFAULT_VOICE = os.getenv("TELEGRAM_DEFAULT_VOICE", DEFAULT_VOICE)
+    TELEGRAM_DEFAULT_RATE = os.getenv("TELEGRAM_DEFAULT_RATE", "+0%")
+    TELEGRAM_DEFAULT_PITCH = os.getenv("TELEGRAM_DEFAULT_PITCH", "+0Hz")
+    TELEGRAM_DEFAULT_SHOW_SUBTITLES = os.getenv("TELEGRAM_DEFAULT_SHOW_SUBTITLES", "true").lower() != "false"
+    TELEGRAM_DEFAULT_SUBTITLE_STYLE = os.getenv("TELEGRAM_DEFAULT_SUBTITLE_STYLE", "classic")
 
 
 @app.get("/api/voices")

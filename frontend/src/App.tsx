@@ -46,6 +46,14 @@ interface Config {
     telegram_bot_token_preview: string
 }
 
+interface PreferencesPayload {
+    voice: string
+    rate: string
+    pitch: string
+    show_subtitles: boolean
+    subtitle_style: string
+}
+
 interface ParseResponse {
     segments: Segment[]
 }
@@ -845,6 +853,26 @@ export default function App() {
             localStorage.setItem(PREF_KEYS.subtitleStyle, subtitleStyle)
         } catch { }
     }, [subtitleStyle])
+
+    // Sync current UI defaults to backend so Telegram bot uses the same settings
+    useEffect(() => {
+        if (checkingConfig) return
+
+        const timer = setTimeout(() => {
+            const payload: PreferencesPayload = {
+                voice: selectedVoice,
+                rate,
+                pitch: '+0Hz',
+                show_subtitles: showSubtitles,
+                subtitle_style: subtitleStyle,
+            }
+            apiPost('/preferences', payload).catch(() => {
+                // Silent fail: this sync is best-effort
+            })
+        }, 450)
+
+        return () => clearTimeout(timer)
+    }, [checkingConfig, selectedVoice, rate, showSubtitles, subtitleStyle])
 
     // Auto-preview segments as user types (debounced, canonical parse from backend) and load videos in parallel
     useEffect(() => {

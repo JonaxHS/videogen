@@ -170,16 +170,41 @@ def send_video_file(chat_id: int, file_path: str, caption: str) -> None:
             pass
 
 
+def backend_get_preferences() -> dict:
+    defaults = {
+        "voice": DEFAULT_VOICE,
+        "rate": DEFAULT_RATE,
+        "pitch": DEFAULT_PITCH,
+        "show_subtitles": DEFAULT_SHOW_SUBTITLES,
+        "subtitle_style": DEFAULT_SUBTITLE_STYLE,
+    }
+    try:
+        response = requests.get(f"{BACKEND_URL}/api/preferences", timeout=20)
+        response.raise_for_status()
+        payload = response.json() or {}
+        return {
+            "voice": str(payload.get("voice") or defaults["voice"]),
+            "rate": str(payload.get("rate") or defaults["rate"]),
+            "pitch": str(payload.get("pitch") or defaults["pitch"]),
+            "show_subtitles": bool(payload.get("show_subtitles", defaults["show_subtitles"])),
+            "subtitle_style": str(payload.get("subtitle_style") or defaults["subtitle_style"]),
+        }
+    except Exception as exc:
+        print(f"[telegram-bot] usando defaults locales por error al leer preferencias: {exc}")
+        return defaults
+
+
 def backend_generate(script: str) -> str:
+    prefs = backend_get_preferences()
     response = requests.post(
         f"{BACKEND_URL}/api/generate",
         json={
             "script": script,
-            "voice": DEFAULT_VOICE,
-            "rate": DEFAULT_RATE,
-            "pitch": DEFAULT_PITCH,
-            "show_subtitles": DEFAULT_SHOW_SUBTITLES,
-            "subtitle_style": DEFAULT_SUBTITLE_STYLE,
+            "voice": prefs["voice"],
+            "rate": prefs["rate"],
+            "pitch": prefs["pitch"],
+            "show_subtitles": prefs["show_subtitles"],
+            "subtitle_style": prefs["subtitle_style"],
             "selected_videos": {},
         },
         timeout=60,
