@@ -23,6 +23,10 @@ DEFAULT_SUBTITLE_STYLE = os.getenv("TELEGRAM_DEFAULT_SUBTITLE_STYLE", "classic")
 
 POLL_TIMEOUT = int(os.getenv("TELEGRAM_LONG_POLL_TIMEOUT", "30"))
 JOB_TIMEOUT_SEC = int(os.getenv("TELEGRAM_JOB_TIMEOUT_SEC", "1800"))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
+OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", os.getenv("OLLAMA_SCRIPT_MODEL", "qwen2.5:7b-instruct"))
+SCRIPT_DEFAULT_TONE = os.getenv("TELEGRAM_SCRIPT_DEFAULT_TONE", "educativo viral")
+SCRIPT_DEFAULT_DURATION = int(os.getenv("TELEGRAM_SCRIPT_DEFAULT_DURATION", "60"))
 
 allowed_chat_ids_raw = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").strip()
 ALLOWED_CHAT_IDS = {
@@ -30,6 +34,9 @@ ALLOWED_CHAT_IDS = {
     for chat_id in allowed_chat_ids_raw.split(",")
     if chat_id.strip()
 }
+
+# In-memory chat history for /chat mode (light context window)
+CHAT_MEMORY: dict[int, list[dict]] = {}
 
 
 def _tg_url(method: str) -> str:
@@ -214,6 +221,61 @@ def backend_generate(script: str) -> str:
     return data["job_id"]
 
 
+def backend_generate_script(topic: str, tone: str = SCRIPT_DEFAULT_TONE, duration_seconds: int = SCRIPT_DEFAULT_DURATION) -> str:
+    response = requests.post(
+        f"{BACKEND_URL}/api/generate-script",
+        json={
+            "topic": topic,
+            "tone": tone,
+            "duration_seconds": max(15, min(180, int(duration_seconds))),
+            "language": "es",
+        },
+        timeout=180,
+    )
+    response.raise_for_status()
+    data = response.json() or {}
+    script = str(data.get("script") or "").strip()
+    if not script:
+        raise RuntimeError("Qwen devolvió un guion vacío")
+    return script
+
+
+def ollama_chat(chat_id: int, user_text: str) -> str:
+    history = CHAT_MEMORY.get(chat_id, [])[-8:]
+    messages = [{"role": "system", "content": "Responde en español de forma clara, útil y breve."}] + history + [
+        {"role": "user", "content": user_text}
+    ]
+
+    chat_payload = {
+        "model": OLLAMA_CHAT_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": 0.7, "top_p": 0.9},
+    }
+    generate_payload = {
+        "model": OLLAMA_CHAT_MODEL,
+        "prompt": (
+            "Eres un asistente útil. Responde en español.\n"
+            f"Usuario: {user_text}\nAsistente:"
+        ),
+        "stream": False,
+        "options": {"temperature": 0.7, "top_p": 0.9},
+    }
+
+    response = requests.post(f"{OLLAMA_BASE_URL}/api/chat", json=chat_payload, timeout=120)
+    if response.status_code == 404:
+        response = requests.post(f"{OLLAMA_BASE_URL}/api/generate", json=generate_payload, timeout=120)
+    response.raise_for_status()
+    payload = response.json() or {}
+
+    answer = str(((payload.get("message") or {}).get("content")) or payload.get("response") or "").strip()
+    if not answer:
+        raise RuntimeError("Qwen devolvió una respuesta vacía")
+
+    CHAT_MEMORY[chat_id] = (history + [{"role": "user", "content": user_text}, {"role": "assistant", "content": answer}])[-10:]
+    return answer
+
+
 def backend_wait_for_job(job_id: str, chat_id: int) -> dict:
     started = time.time()
     last_sent_progress = -1
@@ -296,6 +358,10 @@ def parse_user_script(text: str) -> Optional[str]:
         payload = text[len("/generate"):].strip()
         return payload or None
 
+    if text.startswith("/video"):
+        payload = text[len("/video"):].strip()
+        return payload or None
+
     if text.startswith("/"):
         return None
 
@@ -324,9 +390,15 @@ def handle_update(update: dict) -> None:
         send_message(
             chat_id,
             "Hola 👋\n\n"
-            "Envíame un guion y te regreso un video automáticamente.\n\n"
+            "Puedo ayudarte con 3 cosas:\n"
+            "1) Generar guiones con Qwen\n"
+            "2) Conversar contigo\n"
+            "3) Generar videos\n\n"
             "También puedes usar:\n"
-            "`/generate tu guion aquí`\n"
+            "`/script tema | tono | segundos` para crear un guion\n"
+            "`/chat tu pregunta` para conversar con Qwen\n"
+            "`/video tu guion aquí` para generar video\n"
+            "`/generate tu guion aquí` (alias de /video)\n"
             "`/ping` para verificar el bot\n"
             "`/id` para ver tu chat id",
             reply_to_message_id=message_id,
@@ -339,6 +411,48 @@ def handle_update(update: dict) -> None:
 
     if text.startswith("/id"):
         send_message(chat_id, f"🆔 Tu chat_id es: {chat_id}", reply_to_message_id=message_id)
+        return
+
+    if text.startswith("/chat"):
+        payload = text[len("/chat"):].strip()
+        if not payload:
+            send_message(chat_id, "Uso: /chat <mensaje>", reply_to_message_id=message_id)
+            return
+        try:
+            send_chat_action(chat_id, "typing")
+            answer = ollama_chat(chat_id, payload)
+            send_message(chat_id, f"🤖 {answer}", reply_to_message_id=message_id)
+        except Exception as exc:
+            send_message(chat_id, f"❌ Error conversando con Qwen: {exc}", reply_to_message_id=message_id)
+        return
+
+    if text.startswith("/script"):
+        payload = text[len("/script"):].strip()
+        if not payload:
+            send_message(chat_id, "Uso: /script <tema> | <tono opcional> | <segundos opcional>", reply_to_message_id=message_id)
+            return
+
+        parts = [p.strip() for p in payload.split("|")]
+        topic = parts[0] if parts else ""
+        tone = parts[1] if len(parts) > 1 and parts[1] else SCRIPT_DEFAULT_TONE
+        duration = SCRIPT_DEFAULT_DURATION
+        if len(parts) > 2 and parts[2]:
+            try:
+                duration = int(parts[2])
+            except ValueError:
+                duration = SCRIPT_DEFAULT_DURATION
+
+        if not topic:
+            send_message(chat_id, "❌ Debes indicar un tema para el guion.", reply_to_message_id=message_id)
+            return
+
+        try:
+            send_chat_action(chat_id, "typing")
+            send_message(chat_id, "🤖 Generando guion con Qwen...")
+            script = backend_generate_script(topic=topic, tone=tone, duration_seconds=duration)
+            send_message(chat_id, f"📝 Guion generado:\n\n{script}", reply_to_message_id=message_id)
+        except Exception as exc:
+            send_message(chat_id, f"❌ Error generando guion: {exc}", reply_to_message_id=message_id)
         return
 
     script = parse_user_script(text)
