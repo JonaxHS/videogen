@@ -106,10 +106,10 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_VIDEO_RERANK_MODEL = os.getenv("OLLAMA_VIDEO_RERANK_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_VIDEO_VISION_MODEL = os.getenv("OLLAMA_VIDEO_VISION_MODEL", "qwen2.5vl:7b")
 ENABLE_QWEN_VIDEO_RERANK = _bool_env("ENABLE_QWEN_VIDEO_RERANK", True)
-ENABLE_QWEN_VIDEO_VISUAL_RERANK = _bool_env("ENABLE_QWEN_VIDEO_VISUAL_RERANK", True)
-QWEN_VIDEO_RERANK_TOP_K = int(os.getenv("QWEN_VIDEO_RERANK_TOP_K", "8"))
-QWEN_VIDEO_VISUAL_TOP_K = int(os.getenv("QWEN_VIDEO_VISUAL_TOP_K", "4"))
-QWEN_VIDEO_VISUAL_MAX_FRAMES = int(os.getenv("QWEN_VIDEO_VISUAL_MAX_FRAMES", "3"))
+ENABLE_QWEN_VIDEO_VISUAL_RERANK = _bool_env("ENABLE_QWEN_VIDEO_VISUAL_RERANK", False)  # Disabled by default - very slow
+QWEN_VIDEO_RERANK_TOP_K = int(os.getenv("QWEN_VIDEO_RERANK_TOP_K", "6"))  # Reduced from 8 to 6
+QWEN_VIDEO_VISUAL_TOP_K = int(os.getenv("QWEN_VIDEO_VISUAL_TOP_K", "2"))  # Reduced from 4 to 2
+QWEN_VIDEO_VISUAL_MAX_FRAMES = int(os.getenv("QWEN_VIDEO_VISUAL_MAX_FRAMES", "1"))  # Reduced from 3 to 1
 QWEN_VIDEO_VISUAL_WEIGHT = float(os.getenv("QWEN_VIDEO_VISUAL_WEIGHT", "18"))
 MIN_RELEVANCE_SCORE = float(os.getenv("MIN_RELEVANCE_SCORE", "0.22"))
 MIN_RELEVANCE_SCORE_GLOBAL = float(os.getenv("MIN_RELEVANCE_SCORE_GLOBAL", "0.16"))
@@ -1763,9 +1763,9 @@ def _ollama_generate_text(user_prompt: str) -> str:
         },
     }
 
-    response = requests.post(f"{base_url}/api/chat", json=chat_payload, timeout=25)
+    response = requests.post(f"{base_url}/api/chat", json=chat_payload, timeout=12)  # Reduced from 25s
     if response.status_code == 404:
-        response = requests.post(f"{base_url}/api/generate", json=generate_payload, timeout=25)
+        response = requests.post(f"{base_url}/api/generate", json=generate_payload, timeout=12)
 
     response.raise_for_status()
     payload = response.json() or {}
