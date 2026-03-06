@@ -546,7 +546,7 @@ def _generate_script_with_ollama(topic: str, tone: str, duration_seconds: int, l
         "- Incluye cierre fuerte o reflexión final.\n"
     )
 
-    payload = {
+    chat_payload = {
         "model": OLLAMA_SCRIPT_MODEL,
         "messages": [
             {
@@ -565,12 +565,31 @@ def _generate_script_with_ollama(topic: str, tone: str, duration_seconds: int, l
         },
     }
 
+    generate_payload = {
+        "model": OLLAMA_SCRIPT_MODEL,
+        "prompt": (
+            "Eres un guionista experto en contenido corto para redes sociales.\n\n"
+            f"{prompt}"
+        ),
+        "stream": False,
+        "options": {
+            "temperature": 0.8,
+            "top_p": 0.9,
+        },
+    }
+
     try:
         response = requests.post(
             f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
-            json=payload,
+            json=chat_payload,
             timeout=180,
         )
+        if response.status_code == 404:
+            response = requests.post(
+                f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate",
+                json=generate_payload,
+                timeout=180,
+            )
         response.raise_for_status()
         data = response.json()
     except Exception as e:
@@ -582,7 +601,7 @@ def _generate_script_with_ollama(topic: str, tone: str, duration_seconds: int, l
             ),
         )
 
-    text = ((data.get("message") or {}).get("content") or "").strip()
+    text = (((data.get("message") or {}).get("content")) or data.get("response") or "").strip()
     if not text:
         raise HTTPException(status_code=500, detail="El modelo devolvió una respuesta vacía")
     return text
