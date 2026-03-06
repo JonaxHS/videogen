@@ -796,6 +796,8 @@ function ConfigPanel({
     const [deepgramKey, setDeepgramKey] = useState('')
     const [telegramBotToken, setTelegramBotToken] = useState('')
     const [loading, setLoading] = useState(false)
+    const [cleanupLoading, setCleanupLoading] = useState(false)
+    const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
 
@@ -825,6 +827,20 @@ function ConfigPanel({
             setError(e instanceof Error ? e.message : 'Error desconocido')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleCleanup = async () => {
+        setCleanupLoading(true)
+        setCleanupMessage(null)
+        try {
+            const res = await apiPost<any>('/cleanup', {})
+            setCleanupMessage(`✅ ${res.message}\nLiberados: ${res.freed}`)
+            setTimeout(() => setCleanupMessage(null), 5000)
+        } catch (e: unknown) {
+            setCleanupMessage(`❌ Error: ${e instanceof Error ? e.message : 'Error desconocido'}`)
+        } finally {
+            setCleanupLoading(false)
         }
     }
 
@@ -919,6 +935,47 @@ function ConfigPanel({
                                 onChange={e => setTelegramBotToken(e.target.value)}
                                 disabled={loading}
                             />
+                        </div>
+                    </div>
+
+                    <div className="config-section">
+                        <h3>🧹 Mantenimiento</h3>
+                        <div className="config-field">
+                            <label>Limpiar Cache de Videos</label>
+                            <p className="config-hint">
+                                Elimina archivos de cache antiguos para liberar espacio en disco
+                            </p>
+                            <button
+                                onClick={handleCleanup}
+                                disabled={cleanupLoading}
+                                style={{
+                                    width: '100%',
+                                    background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    color: 'white',
+                                    padding: '10px 12px',
+                                    cursor: cleanupLoading ? 'not-allowed' : 'pointer',
+                                    opacity: cleanupLoading ? 0.7 : 1,
+                                    fontWeight: 500,
+                                }}
+                            >
+                                {cleanupLoading ? '⏳ Limpiando...' : '🧹 Limpiar Cache'}
+                            </button>
+                            {cleanupMessage && (
+                                <div style={{
+                                    marginTop: 12,
+                                    padding: 10,
+                                    borderRadius: 6,
+                                    background: cleanupMessage.startsWith('✅') ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                    border: `1px solid ${cleanupMessage.startsWith('✅') ? '#22c55e' : '#ef4444'}`,
+                                    fontSize: 13,
+                                    color: 'var(--text)',
+                                    whiteSpace: 'pre-wrap',
+                                }}>
+                                    {cleanupMessage}
+                                </div>
+                            )}
                         </div>
                     </div>
 

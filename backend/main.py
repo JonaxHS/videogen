@@ -275,6 +275,34 @@ def _reload_env_globals():
     TELEGRAM_DEFAULT_SUBTITLE_STYLE = os.getenv("TELEGRAM_DEFAULT_SUBTITLE_STYLE", "classic")
 
 
+@app.post("/api/cleanup")
+def cleanup_cache():
+    """Clean up old cache files."""
+    try:
+        from modules.video_search import _cleanup_old_files, CACHE_DIR
+        import shutil
+        
+        # Get cache size before
+        cache_size_before = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0
+        
+        # Clean up old files (keep only 1GB)
+        _cleanup_old_files(target_mb=1000)
+        
+        # Get cache size after
+        cache_size_after = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0
+        freed_mb = cache_size_before - cache_size_after
+        
+        return {
+            "success": True,
+            "message": f"Limpieza completada. Se liberaron {freed_mb:.1f}MB",
+            "cache_size_before": f"{cache_size_before:.1f}MB",
+            "cache_size_after": f"{cache_size_after:.1f}MB",
+            "freed": f"{freed_mb:.1f}MB"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
+
+
 @app.get("/api/voices")
 def voices():
     return get_available_voices()
