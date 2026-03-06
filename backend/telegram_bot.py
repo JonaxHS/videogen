@@ -37,6 +37,7 @@ ALLOWED_CHAT_IDS = {
 
 # In-memory chat history for /chat mode (light context window)
 CHAT_MEMORY: dict[int, list[dict]] = {}
+PENDING_SCRIPT_BY_CHAT: dict[int, str] = {}
 
 
 def _tg_url(method: str) -> str:
@@ -52,13 +53,15 @@ def _tg_call(method: str, *, json: Optional[dict] = None, params: Optional[dict]
     return payload
 
 
-def send_message(chat_id: int, text: str, reply_to_message_id: Optional[int] = None) -> None:
+def send_message(chat_id: int, text: str, reply_to_message_id: Optional[int] = None, reply_markup: Optional[dict] = None) -> None:
     payload = {
         "chat_id": chat_id,
         "text": text,
     }
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     _tg_call("sendMessage", json=payload, timeout=30)
 
 
@@ -369,6 +372,39 @@ def parse_user_script(text: str) -> Optional[str]:
 
 
 def handle_update(update: dict) -> None:
+    callback_query = update.get("callback_query")
+    if callback_query:
+        callback_id = callback_query.get("id")
+        data = (callback_query.get("data") or "").strip()
+        callback_message = callback_query.get("message") or {}
+        callback_chat = callback_message.get("chat") or {}
+        callback_chat_id = callback_chat.get("id")
+
+        if callback_id:
+            try:
+                _tg_call("answerCallbackQuery", json={"callback_query_id": callback_id}, timeout=15)
+            except Exception:
+                pass
+
+        if callback_chat_id is None:
+            return
+
+        if data == "gen_video_yes":
+            pending_script = (PENDING_SCRIPT_BY_CHAT.get(int(callback_chat_id)) or "").strip()
+            if not pending_script:
+                send_message(int(callback_chat_id), "⚠️ No encontré un guion pendiente. Usa /script para generar uno nuevo.")
+                return
+            send_message(int(callback_chat_id), "🎬 Perfecto. Generando video con ese guion...")
+            handle_script(chat_id=int(callback_chat_id), script=pending_script, message_id=None)
+            return
+
+        if data == "gen_video_no":
+            PENDING_SCRIPT_BY_CHAT.pop(int(callback_chat_id), None)
+            send_message(int(callback_chat_id), "👌 Listo. Cuando quieras, usa /video <guion> para generarlo.")
+            return
+
+        return
+
     message = update.get("message") or update.get("edited_message")
     if not message:
         return
@@ -450,7 +486,18 @@ def handle_update(update: dict) -> None:
             send_chat_action(chat_id, "typing")
             send_message(chat_id, "🤖 Generando guion con Qwen...")
             script = backend_generate_script(topic=topic, tone=tone, duration_seconds=duration)
+            PENDING_SCRIPT_BY_CHAT[chat_id] = script
             send_message(chat_id, f"📝 Guion generado:\n\n{script}", reply_to_message_id=message_id)
+            send_message(
+                chat_id,
+                "¿Deseas generar un video con este guion?",
+                reply_markup={
+                    "inline_keyboard": [[
+                        {"text": "✅ Sí, generar video", "callback_data": "gen_video_yes"},
+                        {"text": "❌ No", "callback_data": "gen_video_no"},
+                    ]]
+                },
+            )
         except Exception as exc:
             send_message(chat_id, f"❌ Error generando guion: {exc}", reply_to_message_id=message_id)
         return
