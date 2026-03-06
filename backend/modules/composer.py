@@ -15,6 +15,7 @@ OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 FPS = 30
 OUTPUT_FORMAT = "mp4"
+NASA_INTRO_SKIP_SECONDS = 2.0
 
 # Subtitle styles: {name: {fontsize, color, bgcolor, position, extra_params}}
 SUBTITLE_STYLES = {
@@ -126,6 +127,7 @@ def compose_video(
             audio_duration=seg["audio_duration"],
             output_path=str(seg_path),
             show_subtitles=show_subtitles,
+            video_provider=seg.get("video_provider", "manual"),
             subtitle_style=subtitle_style,
         )
         segment_files.append(str(seg_path))
@@ -176,6 +178,7 @@ def _compose_segment(
     audio_duration: float,
     output_path: str,
     show_subtitles: bool,
+    video_provider: str = "manual",
     subtitle_style: str = DEFAULT_SUBTITLE_STYLE,
 ) -> None:
     """
@@ -255,9 +258,13 @@ def _compose_segment(
             f"[out]"
         )
 
+    video_input_options = ["-stream_loop", "-1"]
+    if (video_provider or "").lower() == "nasa":
+        video_input_options.extend(["-ss", str(NASA_INTRO_SKIP_SECONDS)])
+
     cmd = [
         "ffmpeg", "-y",
-        "-stream_loop", "-1",        # Loop video stream
+        *video_input_options,          # Loop and optional intro trim for NASA clips
         "-i", video_path,            # Input 0: video
         "-i", audio_path,            # Input 1: TTS audio
         "-filter_complex", filter_complex,

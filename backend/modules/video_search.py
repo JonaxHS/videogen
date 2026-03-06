@@ -201,6 +201,29 @@ def search_and_download_video(
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    info = search_and_download_video_info(
+        keywords=keywords,
+        output_path=output_path,
+        pexels_api_key=pexels_api_key,
+        pixabay_api_key=pixabay_api_key,
+        context_text=context_text,
+        min_duration=min_duration,
+        fallback_keywords=fallback_keywords,
+        exclude_urls=exclude_urls,
+    )
+    return info["path"]
+
+
+def search_and_download_video_info(
+    keywords: str,
+    output_path: str,
+    pexels_api_key: str = "",
+    pixabay_api_key: str = "",
+    context_text: str = "",
+    min_duration: int = 5,
+    fallback_keywords: str = "nature landscape",
+    exclude_urls: set[str] | None = None,
+) -> dict:
     options = search_video_options(
         keywords=keywords,
         pexels_api_key=pexels_api_key,
@@ -215,7 +238,25 @@ def search_and_download_video(
     if not options:
         raise RuntimeError(f"No video found for keywords: '{keywords}'")
     top = options[0]
-    return download_video_from_url(top["url"], provider_hint=top.get("provider", "manual"))
+    local_path = download_video_from_url(top["url"], provider_hint=top.get("provider", "manual"))
+    return {
+        "path": local_path,
+        "provider": top.get("provider", "manual"),
+        "url": top.get("url", ""),
+    }
+
+
+def infer_provider_from_url(url: str) -> str:
+    value = (url or "").lower()
+    if not value:
+        return "manual"
+    if "nasa.gov" in value or "images-api.nasa.gov" in value or "images-assets.nasa.gov" in value:
+        return "nasa"
+    if "pexels.com" in value:
+        return "pexels"
+    if "pixabay.com" in value:
+        return "pixabay"
+    return "manual"
 
 
 def search_video_options(

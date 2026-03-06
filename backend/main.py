@@ -18,7 +18,13 @@ from dotenv import load_dotenv, dotenv_values
 
 from modules.script_parser import parse_script
 from modules.tts import generate_audio_sync, get_available_voices, DEFAULT_VOICE
-from modules.video_search import search_and_download_video, search_video_options, download_video_from_url
+from modules.video_search import (
+    search_and_download_video,
+    search_and_download_video_info,
+    search_video_options,
+    download_video_from_url,
+    infer_provider_from_url,
+)
 from modules.composer import compose_video, get_audio_duration
 
 ENV_FILE = Path("/app/.env") if Path("/app/.env").exists() else Path(".env")
@@ -452,9 +458,11 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             job["message"] = f"Segmento {i + 1}/{total}: buscando video..."
             manual_url = selected_videos.get(str(seg.get("id", i)), "").strip()
             if manual_url:
-                video_path = download_video_from_url(manual_url, provider_hint="manual")
+                manual_provider = infer_provider_from_url(manual_url)
+                video_path = download_video_from_url(manual_url, provider_hint=manual_provider)
+                video_provider = manual_provider
             else:
-                video_path = search_and_download_video(
+                selected_video = search_and_download_video_info(
                     keywords=seg["keywords"],
                     output_path=str(job_dir / f"video_{i:03d}.mp4"),
                     pexels_api_key=PEXELS_API_KEY,
@@ -463,6 +471,8 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                     min_duration=max(3, int(audio_duration)),
                     exclude_urls=used_video_urls,
                 )
+                video_path = selected_video["path"]
+                video_provider = selected_video.get("provider", "manual")
 
             # Track selected clip to avoid repetition in next segments
             used_video_urls.add(Path(video_path).name)
@@ -472,6 +482,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 **seg,
                 "audio_path": tts_result["audio_path"],
                 "video_path": video_path,
+                "video_provider": video_provider,
                 "audio_duration": audio_duration,
             })
 
