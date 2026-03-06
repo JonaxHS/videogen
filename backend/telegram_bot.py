@@ -1,6 +1,7 @@
 import os
 import time
 import tempfile
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -58,12 +59,115 @@ def send_chat_action(chat_id: int, action: str) -> None:
     _tg_call("sendChatAction", json={"chat_id": chat_id, "action": action}, timeout=15)
 
 
+def compress_for_telegram(input_path: str, max_size_mb: int = 45) -> str:
+    """
+    Compress video for Telegram to stay under 50MB limit.
+    Uses progressive compression if needed.
+    """
+    # Check original size
+    original_size = os.path.getsize(input_path) / (1024 * 1024)
+    
+    if original_size <= max_size_mb:
+        return input_path
+    
+    print(f"[telegram-bot] Comprimiendo video: {original_size:.1f}MB → <{max_size_mb}MB")
+    
+    # Create temporary output file
+    output_path = input_path.replace(".mp4", "_compressed.mp4")
+    
+    try:
+        # Use FFmpeg to compress: lower bitrate + CRF optimization
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-c:v", "libx264",
+            "-crf", "30",  # Higher CRF = smaller file (range: 0-51, default 23)
+            "-preset", "fast",  # Faster but still good quality
+            "-c:a", "aac",
+            "-b:a", "96k",  # Reduce audio bitrate to 96kbps
+            "-movflags", "+faststart",  # Enable streaming
+            output_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg compression failed: {result.stderr[-500:]}")
+        
+        compressed_size = os.path.getsize(output_path) / (1024 * 1024)
+        print(f"[telegram-bot] ✓ Video comprimido: {original_size:.1f}MB → {compressed_size:.1f}MB")
+        
+        # If still too large, use more aggressive compression
+        if compressed_size > max_size_mb:
+            print(f"[telegram-bot] Compresión agresiva: {compressed_size:.1f}MB → <{max_size_mb}MB")
+            intermediate = output_path
+            output_path = input_path.replace(".mp4", "_compressed_v2.mp4")
+            
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", intermediate,
+                "-c:v", "libx264",
+                "-crf", "35",  # Very aggressive compression
+                "-preset", "ultrafast",
+                "-s", "1080x1920",  # Ensure resolution stays at 1080x1920
+                "-c:a", "aac",
+                "-b:a", "64k",  # Further reduce audio
+                "-movflags", "+faststart",
+                output_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+            
+            if result.returncode != 0:
+                raise RuntimeError(f"FFmpeg aggressive compression failed: {result.stderr[-500:]}")
+            
+            try:
+                os.remove(intermediate)
+            except Exception:
+                pass
+            
+            final_size = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"[telegram-bot] ✓ Video comprimido (v2): {compressed_size:.1f}MB → {final_size:.1f}MB")
+        
+        # Remove original
+        try:
+            os.remove(input_path)
+        except Exception:
+            pass
+        
+        return output_path
+    
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Video compression timeout (>600s)")
+    except Exception as e:
+        # If compression fails, try to return original if it exists
+        if os.path.exists(input_path):
+            print(f"[telegram-bot] ⚠️ Compression error: {e}, using original file")
+            return input_path
+        raise
+
+
 def send_video_file(chat_id: int, file_path: str, caption: str) -> None:
-    with open(file_path, "rb") as video_file:
-        files = {"video": video_file}
-        data = {"chat_id": chat_id, "caption": caption}
-        response = requests.post(_tg_url("sendVideo"), data=data, files=files, timeout=300)
-    response.raise_for_status()
+    # Compress for Telegram if needed (50MB limit)
+    compressed_path = compress_for_telegram(file_path, max_size_mb=45)
+    
+    try:
+        file_size_mb = os.path.getsize(compressed_path) / (1024 * 1024)
+        print(f"[telegram-bot] Enviando video: {file_size_mb:.1f}MB")
+        
+        with open(compressed_path, "rb") as video_file:
+            files = {"video": video_file}
+            data = {"chat_id": chat_id, "caption": caption}
+            response = requests.post(_tg_url("sendVideo"), data=data, files=files, timeout=300)
+        response.raise_for_status()
+        print(f"[telegram-bot] ✓ Video enviado exitosamente")
+    finally:
+        # Clean up compressed file if it's different from original
+        try:
+            if compressed_path != file_path and os.path.exists(compressed_path):
+                os.remove(compressed_path)
+        except Exception:
+            pass
 
 
 def backend_generate(script: str) -> str:
