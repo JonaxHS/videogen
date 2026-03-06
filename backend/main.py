@@ -297,9 +297,6 @@ def preview_voice(req: VoicePreviewRequest):
 
 @app.post("/api/generate", response_model=GenerateResponse)
 def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
-    if not PEXELS_API_KEY and not PIXABAY_API_KEY:
-        raise HTTPException(status_code=500, detail="No video provider configured: set PEXELS_API_KEY or PIXABAY_API_KEY")
-
     if not req.script.strip():
         raise HTTPException(status_code=400, detail="Script cannot be empty")
 
@@ -348,9 +345,6 @@ def parse(req: ParseRequest):
 
 @app.post("/api/video-options")
 def video_options(req: VideoOptionsRequest):
-    if not PEXELS_API_KEY and not PIXABAY_API_KEY:
-        raise HTTPException(status_code=500, detail="No video provider configured")
-
     options = search_video_options(
         keywords=req.keywords,
         pexels_api_key=PEXELS_API_KEY,

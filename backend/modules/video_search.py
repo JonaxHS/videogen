@@ -363,7 +363,18 @@ def search_video_options(
             best_by_url[url] = candidate
 
     ranked = sorted(best_by_url.values(), key=lambda c: c.get("score", 0), reverse=True)
-    return ranked[: max(1, limit)]
+    limited = ranked[: max(1, limit)]
+
+    # Ensure NASA appears in global searches when available (useful for astronomy-focused reels)
+    if global_search and limited:
+        nasa_in_limited = any((c.get("provider") == "nasa") for c in limited)
+        if not nasa_in_limited:
+            nasa_candidates = [c for c in ranked if c.get("provider") == "nasa"]
+            if nasa_candidates:
+                # Replace the last item with the best NASA candidate for provider diversity
+                limited[-1] = nasa_candidates[0]
+
+    return limited
 
 
 def download_video_from_url(video_url: str, provider_hint: str = "manual") -> str:
