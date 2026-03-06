@@ -551,6 +551,28 @@ function SegmentCard({
     return (
         <div className="segment-card">
             <div className="segment-num">{index + 1}</div>
+            {videoOptions.length > 0 && (
+                <div
+                    onClick={onThumbClick}
+                    className="segment-thumb"
+                    onMouseOver={(e) => {
+                        (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'
+                    }}
+                    onMouseOut={(e) => {
+                        (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
+                    }}
+                >
+                    {thumbUrl ? (
+                        <img
+                            src={thumbUrl}
+                            alt="video-thumb"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                    ) : (
+                        <div style={{ opacity: 0.5, fontSize: 10 }}>🎬</div>
+                    )}
+                </div>
+            )}
             <div className="segment-info">
                 <p className="segment-text">{seg.text}</p>
                 <div className="segment-tags">
@@ -559,40 +581,170 @@ function SegmentCard({
                     ))}
                     <span className="tag tag-dur">⏱ ~{seg.estimated_duration.toFixed(1)}s</span>
                 </div>
-                {videoOptions.length > 0 && (
-                    <div
-                        onClick={onThumbClick}
-                        style={{
-                            marginTop: 10,
-                            cursor: 'pointer',
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            aspectRatio: '16/9',
-                            background: '#000',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            border: '2px solid var(--border)',
-                            transition: 'all 0.2s',
-                        }}
-                        onMouseOver={(e) => {
-                            (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'
-                        }}
-                        onMouseOut={(e) => {
-                            (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
-                        }}
+            </div>
+        </div>
+    )
+}
+
+// ─── Config Panel ─────────────────────────────────────────────────────────────
+
+function ConfigPanel({
+    onClose,
+    existingConfig,
+    onReload,
+}: {
+    onClose: () => void
+    existingConfig?: Config
+    onReload: () => void
+}) {
+    const [pexelsKey, setPexelsKey] = useState('')
+    const [pixabayKey, setPixabayKey] = useState('')
+    const [elevenlabsKey, setElevenlabsKey] = useState('')
+    const [deepgramKey, setDeepgramKey] = useState('')
+    const [telegramBotToken, setTelegramBotToken] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [success, setSuccess] = useState(false)
+
+    const hasPexels = !!existingConfig?.pexels_key_preview
+    const hasPixabay = !!existingConfig?.pixabay_key_preview
+    const hasElevenlabs = !!existingConfig?.elevenlabs_key_preview
+    const hasDeepgram = !!existingConfig?.deepgram_key_preview
+    const hasTelegramBot = !!existingConfig?.telegram_bot_token_preview
+
+    const handleSave = async () => {
+        setError(null)
+        setLoading(true)
+        try {
+            await apiPost('/setup', {
+                pexels_api_key: pexelsKey,
+                pixabay_api_key: pixabayKey,
+                elevenlabs_api_key: elevenlabsKey,
+                deepgram_api_key: deepgramKey,
+                telegram_bot_token: telegramBotToken,
+            })
+            setSuccess(true)
+            setTimeout(() => {
+                onReload()
+                onClose()
+            }, 1200)
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : 'Error desconocido')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className="config-panel-overlay">
+            <div className="config-panel">
+                <div className="config-panel-header">
+                    <h2>⚙️ Configuración</h2>
+                    <button
+                        className="btn-close"
+                        onClick={onClose}
+                        aria-label="Cerrar"
                     >
-                        {thumbUrl ? (
-                            <img
-                                src={thumbUrl}
-                                alt="video-thumb"
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        ✕
+                    </button>
+                </div>
+
+                <div className="config-panel-body">
+                    <div className="config-section">
+                        <h3>Proveedores de Video</h3>
+                        <div className="config-field">
+                            <label>🔑 Pexels API Key {hasPexels && '✓'}</label>
+                            <p className="config-hint">
+                                Regístrate gratis en <a href="https://www.pexels.com/api/" target="_blank" rel="noreferrer">pexels.com/api</a>
+                            </p>
+                            <input
+                                type="text"
+                                placeholder={hasPexels ? `Ya configurada: ${existingConfig?.pexels_key_preview || ''}` : "Pega tu Pexels API Key..."}
+                                value={pexelsKey}
+                                onChange={e => setPexelsKey(e.target.value)}
+                                disabled={loading}
                             />
-                        ) : (
-                            <div style={{ opacity: 0.5, fontSize: 12 }}>🎬 Click para cambiar</div>
-                        )}
+                        </div>
+
+                        <div className="config-field">
+                            <label>🎞️ Pixabay API Key {hasPixabay && '✓'}</label>
+                            <p className="config-hint">
+                                Regístrate gratis en <a href="https://pixabay.com/api/docs/" target="_blank" rel="noreferrer">pixabay.com/api/docs</a>
+                            </p>
+                            <input
+                                type="text"
+                                placeholder={hasPixabay ? `Ya configurada: ${existingConfig?.pixabay_key_preview || ''}` : "Pega tu Pixabay API Key..."}
+                                value={pixabayKey}
+                                onChange={e => setPixabayKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
                     </div>
-                )}
+
+                    <div className="config-section">
+                        <h3>Proveedores de Voz</h3>
+                        <div className="config-field">
+                            <label>🎙️ ElevenLabs API Key {hasElevenlabs && '✓'}</label>
+                            <p className="config-hint">
+                                Regístrate en <a href="https://elevenlabs.io/" target="_blank" rel="noreferrer">elevenlabs.io</a> para voces premium
+                            </p>
+                            <input
+                                type="text"
+                                placeholder={hasElevenlabs ? `Ya configurada: ${existingConfig?.elevenlabs_key_preview || ''}` : "Pega tu ElevenLabs API Key..."}
+                                value={elevenlabsKey}
+                                onChange={e => setElevenlabsKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+
+                        <div className="config-field">
+                            <label>🎤 Deepgram API Key {hasDeepgram && '✓'}</label>
+                            <p className="config-hint">
+                                Accede a <a href="https://console.deepgram.com/" target="_blank" rel="noreferrer">console.deepgram.com</a> (opcional)
+                            </p>
+                            <input
+                                type="text"
+                                placeholder={hasDeepgram ? `Ya configurada: ${existingConfig?.deepgram_key_preview || ''}` : "Pega tu Deepgram API Key..."}
+                                value={deepgramKey}
+                                onChange={e => setDeepgramKey(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="config-section">
+                        <h3>Integraciones</h3>
+                        <div className="config-field">
+                            <label>🤖 Telegram Bot Token {hasTelegramBot && '✓'}</label>
+                            <p className="config-hint">
+                                Créalo con <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a> para enviar videos por Telegram
+                            </p>
+                            <input
+                                type="text"
+                                placeholder={hasTelegramBot ? `Ya configurado: ${existingConfig?.telegram_bot_token_preview || ''}` : "Pega tu Telegram Bot Token..."}
+                                value={telegramBotToken}
+                                onChange={e => setTelegramBotToken(e.target.value)}
+                                disabled={loading}
+                            />
+                        </div>
+                    </div>
+
+                    {error && <div className="config-error">❌ {error}</div>}
+                    {success && <div className="config-success">✅ ¡Configuración guardada!</div>}
+                </div>
+
+                <div className="config-panel-footer">
+                    <button className="btn-secondary" onClick={onClose} disabled={loading || success}>
+                        Cancelar
+                    </button>
+                    <button
+                        className="btn-generate"
+                        onClick={handleSave}
+                        disabled={!pexelsKey.trim() && !pixabayKey.trim() && !hasPexels && !hasPixabay || loading || success}
+                    >
+                        {loading ? '⏳ Guardando...' : success ? '✅ ¡Listo!' : '💾 Guardar cambios'}
+                    </button>
+                </div>
             </div>
         </div>
     )
@@ -603,6 +755,7 @@ function SegmentCard({
 export default function App() {
     const [config, setConfig] = useState<Config | null>(null)
     const [showSetupWizard, setShowSetupWizard] = useState(false)
+    const [showConfigPanel, setShowConfigPanel] = useState(false)
     const [checkingConfig, setCheckingConfig] = useState(true)
     const [script, setScript] = useState('')
     const [segments, setSegments] = useState<Segment[]>([])
@@ -858,6 +1011,22 @@ export default function App() {
 
     return (
         <div className="app">
+            {/* Config Panel overlay */}
+            {showConfigPanel && (
+                <ConfigPanel
+                    onClose={() => setShowConfigPanel(false)}
+                    existingConfig={config || undefined}
+                    onReload={async () => {
+                        try {
+                            const newConfig = await apiGet<Config>('/config')
+                            setConfig(newConfig)
+                        } catch {
+                            // keep current config
+                        }
+                    }}
+                />
+            )}
+
             {/* Setup Wizard overlay if not configured */}
             {config && showSetupWizard && (
                 <SetupWizard 
@@ -888,15 +1057,7 @@ export default function App() {
                         <button
                             className="badge"
                             style={{ cursor: 'pointer', border: '1px solid var(--border)' }}
-                            onClick={async () => {
-                                try {
-                                    const latest = await apiGet<Config>('/config')
-                                    setConfig(latest)
-                                } catch {
-                                    // keep current config if refresh fails
-                                }
-                                setShowSetupWizard(true)
-                            }}
+                            onClick={() => setShowConfigPanel(true)}
                             title="Cambiar API keys"
                         >
                             ⚙️ Config
