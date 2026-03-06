@@ -1,6 +1,6 @@
 # VideoGen 🎬
 
-Generador de Reels con IA: pega tu guion, genera voz real, busca videos de stock (Pexels + Pixabay + NASA) con matching inteligente por contexto y sincroniza todo automáticamente.
+Generador de Reels con IA: pega tu guion, genera voz real, busca videos de stock (Pexels + Pixabay + NASA + ESA) con matching inteligente por contexto y sincroniza todo automáticamente.
 
 ## Stack
 - **Backend**: Python 3.11 + FastAPI + FFmpeg
@@ -37,7 +37,7 @@ docker compose up --build
 ### Matching inteligente de video
 
 - El buscador usa `keywords` y texto completo del párrafo para elegir clips más relevantes.
-- Combina resultados de Pexels, Pixabay y NASA y selecciona el mejor por relevancia + calidad.
+- Combina resultados de Pexels, Pixabay, NASA e ESA y selecciona el mejor por relevancia + calidad.
 - El compositor adapta automáticamente videos horizontales o verticales al formato final 9:16.
 
 ## Variables de Entorno (.env)
@@ -49,6 +49,7 @@ docker compose up --build
 | `ELEVENLABS_API_KEY` | (Opcional) API Key para voces premium de ElevenLabs |
 | `DEEPGRAM_API_KEY` | (Opcional) API Key para voces premium de Deepgram |
 | `CORS_ORIGINS` | (Opcional) Orígenes permitidos por CORS, separados por coma |
+| `NASA_INTRO_SKIP_SECONDS` | (Opcional) Segundos a saltar en intros de NASA (default: 2.0) |
 | `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (obligatorio para integración) |
 | `TELEGRAM_BACKEND_URL` | URL interna del backend usada por el bot (default: `http://backend:8000`) |
 | `PUBLIC_BACKEND_URL` | URL pública opcional para mensajes de fallback |
@@ -57,7 +58,15 @@ docker compose up --build
 | `TELEGRAM_DEFAULT_RATE` | Velocidad por defecto en Telegram (ej: `+0%`) |
 | `TELEGRAM_DEFAULT_PITCH` | Pitch por defecto en Telegram (ej: `+0Hz`) |
 | `TELEGRAM_DEFAULT_SHOW_SUBTITLES` | `true`/`false` para subtítulos por defecto |
-| `TELEGRAM_DEFAULT_SUBTITLE_STYLE` | Estilo por defecto (`classic`, `luminous`, `cinema`, `yellow-subtitle`, `minimal`, `neon`) |
+| `TELEGRAM_DEFAULT_SUBTITLE_STYLE` | Estilo por defecto (`classic`, `luminous`, `cinema`, `yellow-subtitle`, `minimal`, `neon`, `karaoke`) |
+
+## Integraciones de video
+
+### Proveedores soportados
+- **Pexels**: Stock de video general (requiere API key)
+- **Pixabay**: Stock de video general (requiere API key)
+- **NASA**: Videos de espacio, astronomía y misiones espaciales (sin API key necesaria)
+- **ESA**: Videos del Hubble, satélites y misiones de la European Space Agency (sin API key necesaria)
 
 ## Voces disponibles
 

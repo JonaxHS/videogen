@@ -1,5 +1,5 @@
 """
-Video Search Module — Pexels + Pixabay + NASA APIs
+Video Search Module — Pexels + Pixabay + NASA + ESA APIs
 Searches and downloads stock video clips matching a keyword query.
 """
 import hashlib
@@ -11,10 +11,12 @@ from typing import Optional
 PEXELS_API_BASE = "https://api.pexels.com/videos"
 PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
 NASA_SEARCH_API = "https://images-api.nasa.gov/search"
+ESA_SEARCH_API = "https://api.esa.int/v2/feed"
 CACHE_DIR = Path("/app/cache/videos")
 
 _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
+_ESA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 
 STOP_WORDS = {
     "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "a", "y", "o",
@@ -255,6 +257,8 @@ def infer_provider_from_url(url: str) -> str:
         return "manual"
     if "nasa.gov" in value or "images-api.nasa.gov" in value or "images-assets.nasa.gov" in value:
         return "nasa"
+    if "esa.int" in value or "esahubble.org" in value:
+        return "esa"
     if "pexels.com" in value:
         return "pexels"
     if "pixabay.com" in value:
@@ -285,6 +289,7 @@ def search_video_options(
     if pixabay_api_key:
         providers.append(("pixabay", pixabay_api_key))
     providers.append(("nasa", ""))
+    providers.append(("esa", ""))
 
     exclude_urls = exclude_urls or set()
     effective_context = "" if global_search else context_text
@@ -357,6 +362,8 @@ def search_video_options(
         for provider_name, provider_key in providers:
             if provider_name == "nasa":
                 continue
+            if provider_name == "esa":
+                continue
             if provider_name == "pexels":
                 all_candidates.extend(
                     _search_pexels_candidates(
@@ -390,6 +397,19 @@ def search_video_options(
                     query,
                     min_duration,
                     per_page=nasa_per_page,
+                    page=page,
+                )
+            )
+        # ESA (European Space Agency) videos
+        esa_per_page = 4 if quick_mode else (12 if global_search else 6)
+        for query_index, query in enumerate(nasa_query_candidates):
+            if query_index >= (1 if quick_mode else 3):
+                break
+            all_candidates.extend(
+                _search_esa_candidates(
+                    query,
+                    min_duration,
+                    per_page=esa_per_page,
                     page=page,
                 )
             )
@@ -877,6 +897,94 @@ def _build_query_candidates(keywords: str, context_text: str, fallback_keywords:
         unique.append(c)
 
     return unique or [fallback_keywords]
+
+
+def _search_esa_candidates(
+    query: str,
+    min_duration: int,
+    per_page: int = 10,
+    page: int = 1,
+) -> list[dict]:
+    """Search ESA (European Space Agency) multimedia API for video clips."""
+    cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)))
+    cached = _ESA_QUERY_CACHE.get(cache_key)
+    if cached is not None:
+        return [dict(item) for item in cached]
+
+    params = {
+        "q": query,
+        "type": "Video",
+        "page": max(1, int(page)),
+    }
+
+    try:
+        resp = requests.get(
+            ESA_SEARCH_API,
+            params=params,
+            timeout=20,
+            headers={"User-Agent": "VideoGen/1.0"},
+        )
+        resp.raise_for_status()
+        payload = resp.json() or {}
+    except Exception as e:
+        print(f"[VideoSearch] ESA search request failed: {e}")
+        return []
+
+    items = payload.get("esa", {}).get("item", [])
+    if not items:
+        _ESA_QUERY_CACHE[cache_key] = []
+        return []
+
+    if not isinstance(items, list):
+        items = [items]
+
+    query_terms = _extract_terms(query)
+    candidates = []
+
+    for item in items[: max(1, per_page)]:
+        # Extract fields from ESA response
+        title = str(item.get("title", "")).strip() if item.get("title") else ""
+        description = str(item.get("description", "")).strip() if item.get("description") else ""
+        
+        # Look for video links in related links
+        related_links = item.get("links", {}).get("related", [])
+        if not isinstance(related_links, list):
+            related_links = [related_links] if related_links else []
+
+        video_url = None
+        thumbnail = None
+
+        for link in related_links:
+            href = str(link.get("href", "")).strip() if link.get("href") else ""
+            rel_type = str(link.get("rel", "")).lower() if link.get("rel") else ""
+
+            if href.endswith((".mp4", ".webm", ".mov")):
+                video_url = href
+            if "preview" in rel_type or "thumbnail" in rel_type:
+                if href.endswith((".jpg", ".jpeg", ".png")):
+                    thumbnail = href
+
+        if not video_url:
+            continue
+
+        metadata_text = " ".join([title, description, query])
+        relevance = _text_relevance_score(query_terms, metadata_text)
+        
+        # Score based on relevance and quality indicators
+        quality_bonus = 8.0 if ("4k" in video_url.lower() or "uhd" in title.lower()) else 5.0
+        total_score = relevance * 12.0 + quality_bonus
+
+        candidates.append({
+            "provider": "esa",
+            "url": video_url,
+            "thumbnail": thumbnail or "",
+            "score": total_score,
+            "duration": max(min_duration, 10),  # ESA videos are typically longer
+        })
+
+    result = sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
+    _ESA_QUERY_CACHE[cache_key] = [dict(item) for item in result]
+    return result
 
 
 def _translate_terms(terms: list[str]) -> list[str]:
