@@ -13,6 +13,9 @@ PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
 NASA_SEARCH_API = "https://images-api.nasa.gov/search"
 CACHE_DIR = Path("/app/cache/videos")
 
+_NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
+_NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
+
 STOP_WORDS = {
     "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "a", "y", "o",
     "en", "con", "sin", "por", "para", "que", "es", "son", "se", "su", "sus", "como", "más",
@@ -305,9 +308,10 @@ def search_video_options(
             if query not in query_candidates:
                 query_candidates.append(query)
 
-    pexels_per_page = 40 if global_search else 20
-    pixabay_per_page = 50 if global_search else 25
-    nasa_per_page = 20 if (global_search or prefer_nasa) else 10
+    quick_mode = (not global_search) and limit <= 2
+    pexels_per_page = 20 if quick_mode else (40 if global_search else 20)
+    pixabay_per_page = 25 if quick_mode else (50 if global_search else 25)
+    nasa_per_page = 6 if quick_mode else (20 if (global_search or prefer_nasa) else 10)
 
     all_candidates = []
     nasa_query_candidates = []
@@ -333,18 +337,21 @@ def search_video_options(
         if phrase not in nasa_query_candidates:
             nasa_query_candidates.append(phrase)
 
-    # Query NASA first to maximize astronomy relevance.
-    for query_index, query in enumerate(nasa_query_candidates):
-        if query_index >= (12 if (global_search or prefer_nasa) else 5):
-            break
-        all_candidates.extend(
-            _search_nasa_candidates(
-                query,
-                min_duration,
-                per_page=nasa_per_page,
-                page=page,
+    nasa_first = prefer_nasa or global_search
+    max_nasa_queries = 3 if quick_mode else (12 if (global_search or prefer_nasa) else 5)
+
+    if nasa_first:
+        for query_index, query in enumerate(nasa_query_candidates):
+            if query_index >= max_nasa_queries:
+                break
+            all_candidates.extend(
+                _search_nasa_candidates(
+                    query,
+                    min_duration,
+                    per_page=nasa_per_page,
+                    page=page,
+                )
             )
-        )
 
     for query_index, query in enumerate(query_candidates):
         for provider_name, provider_key in providers:
@@ -370,16 +377,22 @@ def search_video_options(
                         page=page,
                     )
                 )
-            else:
-                all_candidates.extend(
-                    _search_pixabay_candidates(
-                        query,
-                        provider_key,
-                        min_duration,
-                        per_page=pixabay_per_page,
-                        page=page,
-                    )
+
+        if quick_mode and len(all_candidates) >= max(6, limit * 3):
+            break
+
+    if not nasa_first:
+        for query_index, query in enumerate(nasa_query_candidates):
+            if query_index >= (2 if quick_mode else max_nasa_queries):
+                break
+            all_candidates.extend(
+                _search_nasa_candidates(
+                    query,
+                    min_duration,
+                    per_page=nasa_per_page,
+                    page=page,
                 )
+            )
 
     best_by_url: dict[str, dict] = {}
     for candidate in all_candidates:
@@ -676,6 +689,11 @@ def _search_nasa_candidates(
     per_page: int = 10,
     page: int = 1,
 ) -> list[dict]:
+    cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)))
+    cached = _NASA_QUERY_CACHE.get(cache_key)
+    if cached is not None:
+        return [dict(item) for item in cached]
+
     params = {
         "q": query,
         "media_type": "video",
@@ -697,6 +715,7 @@ def _search_nasa_candidates(
 
     items = (((payload.get("collection") or {}).get("items")) or [])
     if not items:
+        _NASA_QUERY_CACHE[cache_key] = []
         return []
 
     query_terms = _extract_terms(query)
@@ -750,12 +769,17 @@ def _search_nasa_candidates(
             "duration": estimated_duration,
         })
 
-    return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
+    result = sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
+    _NASA_QUERY_CACHE[cache_key] = [dict(item) for item in result]
+    return result
 
 
 def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
     if not nasa_id:
         return None
+
+    if nasa_id in _NASA_ASSET_CACHE:
+        return _NASA_ASSET_CACHE[nasa_id]
 
     asset_endpoint = f"https://images-api.nasa.gov/asset/{nasa_id}"
     try:
@@ -764,10 +788,12 @@ def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
         payload = resp.json() or {}
     except Exception as e:
         print(f"[VideoSearch] NASA asset request failed for {nasa_id}: {e}")
+        _NASA_ASSET_CACHE[nasa_id] = None
         return None
 
     items = (((payload.get("collection") or {}).get("items")) or [])
     if not items:
+        _NASA_ASSET_CACHE[nasa_id] = None
         return None
 
     urls = []
@@ -778,6 +804,7 @@ def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
             urls.append(href)
 
     if not urls:
+        _NASA_ASSET_CACHE[nasa_id] = None
         return None
 
     def quality_key(url: str) -> tuple[int, int]:
@@ -796,7 +823,9 @@ def _resolve_nasa_asset_video_url(nasa_id: str) -> Optional[str]:
         return score, len(url)
 
     urls.sort(key=quality_key, reverse=True)
-    return urls[0]
+    chosen = urls[0]
+    _NASA_ASSET_CACHE[nasa_id] = chosen
+    return chosen
 
 
 def _build_query_candidates(keywords: str, context_text: str, fallback_keywords: str) -> list[str]:
