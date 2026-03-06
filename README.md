@@ -50,6 +50,7 @@ docker compose up --build
 | `DEEPGRAM_API_KEY` | (Opcional) API Key para voces premium de Deepgram |
 | `CORS_ORIGINS` | (Opcional) Orígenes permitidos por CORS, separados por coma |
 | `NASA_INTRO_SKIP_SECONDS` | (Opcional) Segundos a saltar en intros de NASA (default: 2.0) |
+| `ESA_INTRO_SKIP_SECONDS` | (Opcional) Segundos a saltar en intros de ESA (default: 2.0) |
 | `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (obligatorio para integración) |
 | `TELEGRAM_BACKEND_URL` | URL interna del backend usada por el bot (default: `http://backend:8000`) |
 | `PUBLIC_BACKEND_URL` | URL pública opcional para mensajes de fallback |

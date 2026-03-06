@@ -16,6 +16,7 @@ OUTPUT_HEIGHT = 1920
 FPS = 30
 OUTPUT_FORMAT = "mp4"
 NASA_INTRO_SKIP_SECONDS = float(os.getenv("NASA_INTRO_SKIP_SECONDS", "2.0"))
+ESA_INTRO_SKIP_SECONDS = float(os.getenv("ESA_INTRO_SKIP_SECONDS", "2.0"))
 
 # Subtitle styles: {name: {fontsize, color, bgcolor, position, extra_params}}
 SUBTITLE_STYLES = {
@@ -302,11 +303,14 @@ def _compose_segment(
     provider_value = (video_provider or "").lower()
     source_value = (video_source_url or "").lower()
     is_nasa_clip = ("nasa" in provider_value) or ("nasa" in source_value)
+    is_esa_clip = ("esa" in provider_value) or ("esa.int" in source_value) or ("esahubble.org" in source_value)
     
     # Determine skip seconds: use detected value or NASA fallback
     skip_seconds = float(video_skip_seconds or 0.0)
     if skip_seconds == 0.0 and is_nasa_clip:
         skip_seconds = NASA_INTRO_SKIP_SECONDS
+    if skip_seconds == 0.0 and is_esa_clip:
+        skip_seconds = ESA_INTRO_SKIP_SECONDS
 
     # Put -ss BEFORE -stream_loop for correct intro trimming
     video_input_options = ["-stream_loop", "-1"]
