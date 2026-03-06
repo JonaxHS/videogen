@@ -47,6 +47,8 @@ MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))
 MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))
 MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))
 CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
+MIN_RELEVANCE_SCORE = float(os.getenv("MIN_RELEVANCE_SCORE", "0.22"))
+MIN_RELEVANCE_SCORE_GLOBAL = float(os.getenv("MIN_RELEVANCE_SCORE_GLOBAL", "0.16"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_SCRIPT_MODEL = os.getenv("OLLAMA_SCRIPT_MODEL", "qwen2.5:7b-instruct")
 CORS_ORIGINS = [
@@ -130,6 +132,8 @@ class CacheSettingsRequest(BaseModel):
     max_file_age_days: int = 1
     max_file_age_hours: int = 12
     cleanup_interval_seconds: int = 30
+    min_relevance_score: float = 0.22
+    min_relevance_score_global: float = 0.16
 
 
 class ParseRequest(BaseModel):
@@ -205,6 +209,8 @@ def get_cache_settings():
         "max_file_age_days": MAX_FILE_AGE_DAYS,
         "max_file_age_hours": MAX_FILE_AGE_HOURS,
         "cleanup_interval_seconds": CACHE_CLEANUP_INTERVAL_SECONDS,
+        "min_relevance_score": MIN_RELEVANCE_SCORE,
+        "min_relevance_score_global": MIN_RELEVANCE_SCORE_GLOBAL,
     }
 
 
@@ -214,6 +220,8 @@ def save_cache_settings(req: CacheSettingsRequest):
     max_file_age_days = max(0, int(req.max_file_age_days))
     max_file_age_hours = max(0, int(req.max_file_age_hours))
     cleanup_interval_seconds = max(10, int(req.cleanup_interval_seconds))
+    min_relevance_score = min(1.0, max(0.0, float(req.min_relevance_score)))
+    min_relevance_score_global = min(1.0, max(0.0, float(req.min_relevance_score_global)))
 
     if max_file_age_days == 0 and max_file_age_hours == 0:
         raise HTTPException(status_code=400, detail="Debes definir antigüedad por días u horas")
@@ -223,6 +231,8 @@ def save_cache_settings(req: CacheSettingsRequest):
         "MAX_FILE_AGE_DAYS": str(max_file_age_days),
         "MAX_FILE_AGE_HOURS": str(max_file_age_hours),
         "CACHE_CLEANUP_INTERVAL_SECONDS": str(cleanup_interval_seconds),
+        "MIN_RELEVANCE_SCORE": str(min_relevance_score),
+        "MIN_RELEVANCE_SCORE_GLOBAL": str(min_relevance_score_global),
     })
     _reload_env_globals()
     _apply_cache_settings_to_video_search(force_cleanup=True)
@@ -235,6 +245,8 @@ def save_cache_settings(req: CacheSettingsRequest):
             "max_file_age_days": MAX_FILE_AGE_DAYS,
             "max_file_age_hours": MAX_FILE_AGE_HOURS,
             "cleanup_interval_seconds": CACHE_CLEANUP_INTERVAL_SECONDS,
+            "min_relevance_score": MIN_RELEVANCE_SCORE,
+            "min_relevance_score_global": MIN_RELEVANCE_SCORE_GLOBAL,
         },
     }
 
@@ -328,6 +340,8 @@ def _apply_cache_settings_to_video_search(force_cleanup: bool = False):
     video_search_module.MAX_FILE_AGE_DAYS = MAX_FILE_AGE_DAYS
     video_search_module.MAX_FILE_AGE_HOURS = MAX_FILE_AGE_HOURS
     video_search_module.CACHE_CLEANUP_INTERVAL_SECONDS = CACHE_CLEANUP_INTERVAL_SECONDS
+    video_search_module.MIN_RELEVANCE_SCORE = MIN_RELEVANCE_SCORE
+    video_search_module.MIN_RELEVANCE_SCORE_GLOBAL = MIN_RELEVANCE_SCORE_GLOBAL
     if force_cleanup:
         try:
             video_search_module._cleanup_cache_if_needed(force=True)
@@ -340,6 +354,7 @@ def _reload_env_globals():
     global TELEGRAM_DEFAULT_VOICE, TELEGRAM_DEFAULT_RATE, TELEGRAM_DEFAULT_PITCH
     global TELEGRAM_DEFAULT_SHOW_SUBTITLES, TELEGRAM_DEFAULT_SUBTITLE_STYLE
     global MAX_CACHE_SIZE_MB, MAX_FILE_AGE_DAYS, MAX_FILE_AGE_HOURS, CACHE_CLEANUP_INTERVAL_SECONDS
+    global MIN_RELEVANCE_SCORE, MIN_RELEVANCE_SCORE_GLOBAL
 
     load_dotenv(dotenv_path=ENV_FILE, override=True)
     PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
@@ -356,6 +371,8 @@ def _reload_env_globals():
     MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))
     MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))
     CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
+    MIN_RELEVANCE_SCORE = float(os.getenv("MIN_RELEVANCE_SCORE", "0.22"))
+    MIN_RELEVANCE_SCORE_GLOBAL = float(os.getenv("MIN_RELEVANCE_SCORE_GLOBAL", "0.16"))
     _apply_cache_settings_to_video_search(force_cleanup=False)
 
 

@@ -59,6 +59,8 @@ interface CacheSettings {
     max_file_age_days: number
     max_file_age_hours: number
     cleanup_interval_seconds: number
+    min_relevance_score: number
+    min_relevance_score_global: number
 }
 
 interface ParseResponse {
@@ -927,6 +929,8 @@ function ConfigPanel({
     const [maxFileAgeDays, setMaxFileAgeDays] = useState(1)
     const [maxFileAgeHours, setMaxFileAgeHours] = useState(12)
     const [cleanupIntervalSeconds, setCleanupIntervalSeconds] = useState(30)
+    const [minRelevanceScore, setMinRelevanceScore] = useState(0.22)
+    const [minRelevanceScoreGlobal, setMinRelevanceScoreGlobal] = useState(0.16)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
 
@@ -945,6 +949,8 @@ function ConfigPanel({
                 setMaxFileAgeDays(settings.max_file_age_days || 0)
                 setMaxFileAgeHours(settings.max_file_age_hours || 0)
                 setCleanupIntervalSeconds(settings.cleanup_interval_seconds || 30)
+                setMinRelevanceScore(Number(settings.min_relevance_score ?? 0.22))
+                setMinRelevanceScoreGlobal(Number(settings.min_relevance_score_global ?? 0.16))
             })
             .catch(() => {
                 // Keep defaults if endpoint is temporarily unavailable
@@ -1000,6 +1006,8 @@ function ConfigPanel({
                 max_file_age_days: maxFileAgeDays,
                 max_file_age_hours: maxFileAgeHours,
                 cleanup_interval_seconds: cleanupIntervalSeconds,
+                min_relevance_score: minRelevanceScore,
+                min_relevance_score_global: minRelevanceScoreGlobal,
             })
             setCacheSettingsMessage(`✅ ${res.message}`)
             setTimeout(() => setCacheSettingsMessage(null), 4000)
@@ -1150,6 +1158,30 @@ function ConfigPanel({
                                         min={0}
                                         value={maxFileAgeDays}
                                         onChange={e => setMaxFileAgeDays(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Umbral relevancia normal (0-1)</label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        value={minRelevanceScore}
+                                        onChange={e => setMinRelevanceScore(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Umbral relevancia global (0-1)</label>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        value={minRelevanceScoreGlobal}
+                                        onChange={e => setMinRelevanceScoreGlobal(Number(e.target.value || 0))}
                                         disabled={cacheSettingsLoading}
                                     />
                                 </div>

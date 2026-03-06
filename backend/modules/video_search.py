@@ -8,6 +8,9 @@ import re
 import os
 import json
 import random
+import base64
+import subprocess
+import shutil
 import requests
 from pathlib import Path
 from typing import Optional
@@ -101,9 +104,17 @@ MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))  # If >0, overri
 CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_VIDEO_RERANK_MODEL = os.getenv("OLLAMA_VIDEO_RERANK_MODEL", "qwen2.5:7b-instruct")
+OLLAMA_VIDEO_VISION_MODEL = os.getenv("OLLAMA_VIDEO_VISION_MODEL", "qwen2.5vl:7b")
 ENABLE_QWEN_VIDEO_RERANK = _bool_env("ENABLE_QWEN_VIDEO_RERANK", True)
+ENABLE_QWEN_VIDEO_VISUAL_RERANK = _bool_env("ENABLE_QWEN_VIDEO_VISUAL_RERANK", True)
 QWEN_VIDEO_RERANK_TOP_K = int(os.getenv("QWEN_VIDEO_RERANK_TOP_K", "8"))
+QWEN_VIDEO_VISUAL_TOP_K = int(os.getenv("QWEN_VIDEO_VISUAL_TOP_K", "4"))
+QWEN_VIDEO_VISUAL_MAX_FRAMES = int(os.getenv("QWEN_VIDEO_VISUAL_MAX_FRAMES", "3"))
+QWEN_VIDEO_VISUAL_WEIGHT = float(os.getenv("QWEN_VIDEO_VISUAL_WEIGHT", "18"))
+MIN_RELEVANCE_SCORE = float(os.getenv("MIN_RELEVANCE_SCORE", "0.22"))
+MIN_RELEVANCE_SCORE_GLOBAL = float(os.getenv("MIN_RELEVANCE_SCORE_GLOBAL", "0.16"))
 _LAST_CLEANUP_TIME = datetime.now()
+_FFMPEG_AVAILABLE: Optional[bool] = None
 
 
 def _cleanup_cache_if_needed(force: bool = False):
@@ -478,17 +489,13 @@ def search_video_options(
     query_candidates = _build_query_candidates(keywords, effective_context, effective_fallback)
     translated_terms_for_nasa = _translate_terms(_extract_terms(f"{keywords} {context_text}"))
 
-    if global_search:
-        extra_global = [
-            "cinematic broll",
-            "abstract background",
-            "nature landscape",
-            "city night",
-            "technology future",
-        ]
-        for query in extra_global:
-            if query not in query_candidates:
-                query_candidates.append(query)
+    global_fallback_queries = [
+        "cinematic broll",
+        "abstract background",
+        "nature landscape",
+        "city night",
+        "technology future",
+    ] if global_search else []
 
     quick_mode = (not global_search) and limit <= 2
     pexels_per_page = 20 if quick_mode else (40 if global_search else 20)
@@ -610,6 +617,49 @@ def search_video_options(
                     )
                 )
 
+    # Only use broad generic queries as a fallback when the main intent produced too few options.
+    if global_search and len(all_candidates) < max(4, limit * 2):
+        for query in global_fallback_queries:
+            for provider_name, provider_key in providers:
+                if provider_name == "pexels":
+                    all_candidates.extend(
+                        _search_pexels_candidates(
+                            query,
+                            provider_key,
+                            min_duration,
+                            per_page=pexels_per_page,
+                            page=page,
+                        )
+                    )
+                elif provider_name == "pixabay":
+                    all_candidates.extend(
+                        _search_pixabay_candidates(
+                            query,
+                            provider_key,
+                            min_duration,
+                            per_page=pixabay_per_page,
+                            page=page,
+                        )
+                    )
+                elif provider_name == "nasa":
+                    all_candidates.extend(
+                        _search_nasa_candidates(
+                            query,
+                            min_duration,
+                            per_page=nasa_per_page,
+                            page=page,
+                        )
+                    )
+                elif provider_name == "esa":
+                    all_candidates.extend(
+                        _search_esa_candidates(
+                            query,
+                            min_duration,
+                            per_page=esa_per_page,
+                            page=page,
+                        )
+                    )
+
     best_by_url: dict[str, dict] = {}
     for candidate in all_candidates:
         url = candidate.get("url")
@@ -629,8 +679,21 @@ def search_video_options(
         if prev is None or candidate.get("score", 0) > prev.get("score", 0):
             best_by_url[url] = candidate
 
+    # Intent guard: when relevance is too low, avoid returning arbitrary clips.
+    filtered_candidates = []
+    for candidate in best_by_url.values():
+        relevance = float(candidate.get("relevance", 0.0) or 0.0)
+        provider = str(candidate.get("provider", ""))
+        threshold = MIN_RELEVANCE_SCORE_GLOBAL if global_search else MIN_RELEVANCE_SCORE
+        if provider in {"nasa", "esa"}:
+            threshold = max(0.0, threshold - 0.03)
+        if relevance >= threshold:
+            filtered_candidates.append(candidate)
+
+    ranking_pool = filtered_candidates if filtered_candidates else list(best_by_url.values())
+
     ranked = sorted(
-        best_by_url.values(),
+        ranking_pool,
         key=lambda c: (
             2 if (prefer_nasa and c.get("provider") in ("nasa", "esa")) else (1 if c.get("provider") in ("nasa", "esa") else 0),
             c.get("score", 0),
@@ -670,6 +733,15 @@ def search_video_options(
         reranked = _qwen_rerank_candidates(query_text, ranked, top_k=top_k)
         if reranked:
             ranked = reranked
+
+    # Optional visual reranker: Qwen evaluates sampled frames from candidate videos
+    # against the segment text for better intent fidelity.
+    if ENABLE_QWEN_VIDEO_VISUAL_RERANK and len(ranked) > 1 and limit <= 3:
+        query_text = (context_text or keywords or "").strip()
+        top_k = max(2, min(QWEN_VIDEO_VISUAL_TOP_K, len(ranked)))
+        visually_reranked = _qwen_visual_rerank_candidates(query_text, ranked, top_k=top_k)
+        if visually_reranked:
+            ranked = visually_reranked
 
     limited = ranked[: max(1, limit)]
 
@@ -821,7 +893,6 @@ def _search_pexels_candidates(
             str(video.get("url", "")),
             str((video.get("user") or {}).get("name", "")),
             str(video.get("id", "")),
-            query,
         ])
 
         relevance = _text_relevance_score(query_terms, metadata_text)
@@ -837,7 +908,10 @@ def _search_pexels_candidates(
             "url": link,
             "thumbnail": thumbnail,
             "score": total_score,
+            "relevance": relevance,
             "duration": duration,
+            "title": str(video.get("url", "")),
+            "description": str((video.get("user") or {}).get("name", "")),
             "skip_seconds": skip_seconds,
         })
 
@@ -924,7 +998,6 @@ def _search_pixabay_candidates(
             str(hit.get("tags", "")),
             str(hit.get("user", "")),
             str(hit.get("type", "")),
-            query,
         ])
         relevance = _text_relevance_score(query_terms, metadata_text)
         duration_score = max(0.0, 25.0 - abs(duration - min_duration) * 2.0)
@@ -942,7 +1015,10 @@ def _search_pixabay_candidates(
             "url": selected_url,
             "thumbnail": thumbnail,
             "score": total_score,
+            "relevance": relevance,
             "duration": duration,
+            "title": str(hit.get("tags", "")),
+            "description": str(hit.get("type", "")),
             "skip_seconds": skip_seconds,
         })
 
@@ -1010,7 +1086,6 @@ def _search_nasa_candidates(
             str(data.get("title", "")),
             str(data.get("description", "")),
             " ".join([str(k) for k in (data.get("keywords") or [])]),
-            query,
         ])
 
         relevance = _text_relevance_score(query_terms, metadata_text)
@@ -1036,7 +1111,10 @@ def _search_nasa_candidates(
             "url": asset_url,
             "thumbnail": thumbnail,
             "score": total_score,
+            "relevance": relevance,
             "duration": estimated_duration,
+            "title": nasa_title,
+            "description": nasa_desc,
             "skip_seconds": skip_seconds,
         })
 
@@ -1190,7 +1268,7 @@ def _search_esa_candidates(
         if not video_url:
             continue
 
-        metadata_text = " ".join([title, description, query])
+        metadata_text = " ".join([title, description])
         relevance = _text_relevance_score(query_terms, metadata_text)
         
         # Score based on relevance and quality indicators
@@ -1204,7 +1282,10 @@ def _search_esa_candidates(
             "url": video_url,
             "thumbnail": thumbnail or "",
             "score": total_score,
+            "relevance": relevance,
             "duration": max(min_duration, 10),  # ESA videos are typically longer
+            "title": title,
+            "description": description,
             "skip_seconds": skip_seconds,
         })
 
@@ -1457,8 +1538,15 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
         provider = str(candidate.get("provider", "manual"))
         duration = candidate.get("duration", "?")
         score = round(float(candidate.get("score", 0.0)), 2)
+        relevance = round(float(candidate.get("relevance", 0.0)), 3)
         url = str(candidate.get("url", ""))
-        lines.append(f"{i}) provider={provider} duration={duration}s score={score} url={url}")
+        title = str(candidate.get("title", "")).strip()
+        description = str(candidate.get("description", "")).strip()
+        snippet = (f"{title} | {description}").strip(" |")[:240]
+        lines.append(
+            f"{i}) provider={provider} duration={duration}s score={score} relevance={relevance} "
+            f"context={snippet} url={url}"
+        )
 
     options_text = "\n".join(lines)
 
@@ -1489,6 +1577,155 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
     except Exception as e:
         print(f"[VideoSearch] Qwen rerank skipped: {e}")
         return ranked_candidates
+
+
+def _ffmpeg_is_available() -> bool:
+    global _FFMPEG_AVAILABLE
+    if _FFMPEG_AVAILABLE is None:
+        _FFMPEG_AVAILABLE = bool(shutil.which("ffmpeg"))
+    return bool(_FFMPEG_AVAILABLE)
+
+
+def _extract_video_frames_base64(video_url: str, max_frames: int = 3) -> list[str]:
+    if not video_url or max_frames <= 0:
+        return []
+    if not _ffmpeg_is_available():
+        return []
+
+    safe_frames = max(1, min(6, int(max_frames)))
+    url_hash = hashlib.md5(video_url.encode()).hexdigest()
+    frame_dir = CACHE_DIR / "_vision_frames" / url_hash
+    frame_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = sorted(frame_dir.glob("frame_*.jpg"))
+    if len(existing) < safe_frames:
+        for old in existing:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+
+        output_pattern = str(frame_dir / "frame_%02d.jpg")
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            video_url,
+            "-vf",
+            "fps=1/2,scale=640:-1",
+            "-frames:v",
+            str(safe_frames),
+            output_pattern,
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, check=True, timeout=35)
+        except Exception:
+            return []
+
+    frames = []
+    for path in sorted(frame_dir.glob("frame_*.jpg"))[:safe_frames]:
+        try:
+            raw = path.read_bytes()
+            if not raw:
+                continue
+            frames.append(base64.b64encode(raw).decode("utf-8"))
+        except Exception:
+            continue
+    return frames
+
+
+def _ollama_visual_match_score(segment_text: str, candidate: dict, frame_b64_images: list[str]) -> Optional[float]:
+    if not frame_b64_images:
+        return None
+
+    base_url = OLLAMA_BASE_URL.rstrip("/")
+    provider = str(candidate.get("provider", "manual"))
+    title = str(candidate.get("title", "")).strip()
+    description = str(candidate.get("description", "")).strip()
+    duration = candidate.get("duration", "?")
+
+    prompt = (
+        "Evalúa cuánto coincide visualmente este video con el segmento objetivo.\n"
+        f"Segmento objetivo: {segment_text or 'video coherente con el tema'}\n"
+        f"Proveedor: {provider}\n"
+        f"Título/meta: {title}\n"
+        f"Descripción/meta: {description}\n"
+        f"Duración: {duration}s\n\n"
+        "Devuelve SOLO un número entero del 0 al 100 (0 = no coincide, 100 = coincide perfecto)."
+    )
+
+    payload = {
+        "model": OLLAMA_VIDEO_VISION_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Eres un evaluador estricto de coincidencia visual para clips de video.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+                "images": frame_b64_images,
+            },
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "top_p": 0.9,
+        },
+    }
+
+    try:
+        response = requests.post(f"{base_url}/api/chat", json=payload, timeout=40)
+        response.raise_for_status()
+        body = response.json() or {}
+        text = str(((body.get("message") or {}).get("content") or "")).strip()
+        if not text:
+            return None
+
+        match = re.search(r"\b(100|[1-9]?\d)\b", text)
+        if not match:
+            return None
+
+        value = float(int(match.group(1))) / 100.0
+        return min(1.0, max(0.0, value))
+    except Exception:
+        return None
+
+
+def _qwen_visual_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_k: int = 4) -> list[dict]:
+    if not ranked_candidates or top_k < 2:
+        return ranked_candidates
+
+    pool = ranked_candidates[:top_k]
+    tail = ranked_candidates[top_k:]
+    scored = []
+    visual_hits = 0
+
+    for candidate in pool:
+        url = str(candidate.get("url", ""))
+        frames = _extract_video_frames_base64(url, max_frames=QWEN_VIDEO_VISUAL_MAX_FRAMES)
+        visual_score = _ollama_visual_match_score(query_text, candidate, frames) if frames else None
+        if visual_score is not None:
+            visual_hits += 1
+
+        adjusted = float(candidate.get("score", 0.0))
+        if visual_score is not None:
+            adjusted += visual_score * QWEN_VIDEO_VISUAL_WEIGHT
+
+        enriched = dict(candidate)
+        if visual_score is not None:
+            enriched["visual_match"] = round(visual_score, 3)
+        enriched["score"] = adjusted
+        scored.append(enriched)
+
+    if visual_hits == 0:
+        return ranked_candidates
+
+    scored.sort(key=lambda c: c.get("score", 0.0), reverse=True)
+    return scored + tail
 
 
 def _ollama_generate_text(user_prompt: str) -> str:
