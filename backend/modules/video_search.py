@@ -33,9 +33,63 @@ def _get_embedding_model():
             _EMBEDDING_MODEL = False  # Mark as unavailable
     return _EMBEDDING_MODEL if _EMBEDDING_MODEL is not False else None
 
+
+def _detect_intro_seconds(title: str, description: str) -> float:
+    """
+    Detect if a video likely has an intro and estimate its duration in seconds.
+    Returns skip_seconds (0 if no intro detected, 1-5 if detected).
+    """
+    text = f"{title} {description}".lower()
+    
+    # Keyword heuristic check
+    keyword_count = sum(1 for kw in INTRO_KEYWORDS if kw in text)
+    if keyword_count == 0:
+        return 0.0
+    
+    # Try semantic matching
+    model = _get_embedding_model()
+    if model:
+        try:
+            intro_embedding = model.encode("intro opening video start title sequence", convert_to_numpy=True)
+            text_embedding = model.encode(text[:500], convert_to_numpy=True)  # First 500 chars
+            
+            similarity = np.dot(intro_embedding, text_embedding) / (
+                np.linalg.norm(intro_embedding) * np.linalg.norm(text_embedding) + 1e-8
+            )
+            # Normalize to [0, 1]
+            similarity_score = (float(similarity) + 1.0) / 2.0
+            
+            if similarity_score > 0.65:
+                # Estimate intro duration based on keywords
+                if any(x in text for x in ["long intro", "intro largo", "opening sequence"]):
+                    return 5.0
+                elif any(x in text for x in ["intro", "opening", "titles", "créditos"]):
+                    return 3.0
+                else:
+                    return 1.5
+        except Exception as e:
+            print(f"[VideoSearch] Intro detection semantic scoring failed: {e}")
+    
+    # Fallback: keyword-based estimation
+    if keyword_count >= 2:
+        return 3.0
+    elif keyword_count >= 1:
+        return 1.5
+    
+    return 0.0
+
 _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 _ESA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
+
+# Intro detection patterns
+INTRO_KEYWORDS = {
+    "intro", "opening", "títulos", "créditos", "credits", "presentación", "presentation",
+    "theme", "music", "soundtrack", "logo", "logotipo", "channel", "canal",
+    "watermark", "marca de agua", "subscribe", "suscribirse", "like", "me gusta",
+    "disclaimer", "aviso", "warning", "advertencia", "preview", "adelanto",
+    "teaser", "preamble", "preámbulo", "bumper", "slate", "countdown"
+}
 
 STOP_WORDS = {
     "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "a", "y", "o",
@@ -610,12 +664,16 @@ def _search_pexels_candidates(
         resolution_score = min(25.0, (int(selected.get("width", 0) or 0) * int(selected.get("height", 0) or 0)) / 150000.0)
         total_score = relevance * 10.0 + duration_score + resolution_score
 
+        video_title = f"{selected.get('user', {}).get('name', '')} {selected.get('image', '')}"
+        skip_seconds = _detect_intro_seconds(video_title, "")
+
         candidates.append({
             "provider": "pexels",
             "url": link,
             "thumbnail": thumbnail,
             "score": total_score,
             "duration": duration,
+            "skip_seconds": skip_seconds,
         })
 
     return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
@@ -710,6 +768,9 @@ def _search_pixabay_candidates(
 
         # Use Pixabay's previewURL for thumbnail (it's a valid image URL)
         thumbnail = hit.get("previewURL", "")
+        
+        pixabay_title = str(hit.get("tags", ""))
+        skip_seconds = _detect_intro_seconds(pixabay_title, "")
 
         candidates.append({
             "provider": "pixabay",
@@ -717,6 +778,7 @@ def _search_pixabay_candidates(
             "thumbnail": thumbnail,
             "score": total_score,
             "duration": duration,
+            "skip_seconds": skip_seconds,
         })
 
     return sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
@@ -800,12 +862,17 @@ def _search_nasa_candidates(
         estimated_duration = max(min_duration, 8)
         total_score = relevance * 14.0 + quality_bonus
 
+        nasa_title = str(data.get("title", ""))
+        nasa_desc = str(data.get("description", ""))
+        skip_seconds = _detect_intro_seconds(nasa_title, nasa_desc)
+
         candidates.append({
             "provider": "nasa",
             "url": asset_url,
             "thumbnail": thumbnail,
             "score": total_score,
             "duration": estimated_duration,
+            "skip_seconds": skip_seconds,
         })
 
     result = sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
@@ -993,12 +1060,15 @@ def _search_esa_candidates(
         quality_bonus = 8.0 if ("4k" in video_url.lower() or "uhd" in title.lower()) else 5.0
         total_score = relevance * 12.0 + quality_bonus
 
+        skip_seconds = _detect_intro_seconds(title, description)
+
         candidates.append({
             "provider": "esa",
             "url": video_url,
             "thumbnail": thumbnail or "",
             "score": total_score,
             "duration": max(min_duration, 10),  # ESA videos are typically longer
+            "skip_seconds": skip_seconds,
         })
 
     result = sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)

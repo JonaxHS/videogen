@@ -143,6 +143,7 @@ def compose_video(
             show_subtitles=show_subtitles,
             video_provider=seg.get("video_provider", "manual"),
             video_source_url=seg.get("video_source_url", ""),
+            video_skip_seconds=seg.get("video_skip_seconds", 0.0),
             subtitle_style=subtitle_style,
         )
         segment_files.append(str(seg_path))
@@ -195,6 +196,7 @@ def _compose_segment(
     show_subtitles: bool,
     video_provider: str = "manual",
     video_source_url: str = "",
+    video_skip_seconds: float = 0.0,
     subtitle_style: str = DEFAULT_SUBTITLE_STYLE,
 ) -> None:
     """
@@ -300,11 +302,16 @@ def _compose_segment(
     provider_value = (video_provider or "").lower()
     source_value = (video_source_url or "").lower()
     is_nasa_clip = ("nasa" in provider_value) or ("nasa" in source_value)
+    
+    # Determine skip seconds: use detected value or NASA fallback
+    skip_seconds = float(video_skip_seconds or 0.0)
+    if skip_seconds == 0.0 and is_nasa_clip:
+        skip_seconds = NASA_INTRO_SKIP_SECONDS
 
-    # Put -ss BEFORE -stream_loop for NASA so looping starts after intro trim.
+    # Put -ss BEFORE -stream_loop for correct intro trimming
     video_input_options = ["-stream_loop", "-1"]
-    if is_nasa_clip:
-        video_input_options = ["-ss", str(NASA_INTRO_SKIP_SECONDS), "-stream_loop", "-1"]
+    if skip_seconds > 0.0:
+        video_input_options = ["-ss", str(skip_seconds), "-stream_loop", "-1"]
 
     if audio_path:
         cmd = [

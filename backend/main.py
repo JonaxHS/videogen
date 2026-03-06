@@ -541,6 +541,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 "video_path": video_path,
                 "video_provider": video_provider,
                 "video_source_url": selected_video_url,
+                "video_skip_seconds": selected_video.get("skip_seconds", 0.0),
                 "audio_duration": audio_duration,
             })
 
