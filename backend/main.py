@@ -734,7 +734,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 video_provider = manual_provider
                 selected_video_url = manual_url
             else:
-                selected_video = search_and_download_video_info(
+                auto_video_result = search_and_download_video_info(
                     keywords=seg["keywords"],
                     output_path=str(job_dir / f"video_{i:03d}.mp4"),
                     pexels_api_key=PEXELS_API_KEY,
@@ -743,10 +743,10 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                     min_duration=max(3, int(audio_duration)),
                     exclude_urls=used_video_urls,
                 )
-                video_path = selected_video["path"]
-                video_provider = selected_video.get("provider", "manual")
-                selected_video_url = selected_video.get("url", "")
-                video_skip_seconds = float(selected_video.get("skip_seconds", 0.0) or 0.0)
+                video_path = auto_video_result["path"]
+                video_provider = auto_video_result.get("provider", "manual")
+                selected_video_url = auto_video_result.get("url", "")
+                video_skip_seconds = float(auto_video_result.get("skip_seconds", 0.0) or 0.0)
 
             # Track selected clip to avoid repetition in next segments
             used_video_urls.add(Path(video_path).name)
