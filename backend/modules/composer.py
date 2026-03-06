@@ -39,7 +39,7 @@ SUBTITLE_STYLES = {
     "cinema": {
         "fontsize": 72,
         "fontcolor": "white",
-        "boxcolor": "transparent",
+        "boxcolor": "black@0.0",
         "position": "bottom",
         "line_spacing": 10,
         "boxborderw": 0,
@@ -213,22 +213,28 @@ def _compose_segment(
         else:  # bottom (default)
             y_pos = "h-text_h-120"
 
-        # Build drawtext filter with box
-        drawtext_filter = (
-            f"drawtext="
-            f"text='{safe_text}':"
-            f"fontcolor={fontcolor}:"
-            f"fontsize={fontsize}:"
-            f"box=1:"
-            f"boxcolor={boxcolor}:"
-            f"boxborderw={boxborderw}:"
-            f"x=(w-text_w)/2:"
-            f"y={y_pos}:"
-            f"line_spacing={line_spacing}:"
-            f"font=Sans:"
-            f"fix_bounds=true"
-            f"{extra}"
-        )
+        # Build drawtext filter; disable box when style requests transparent/no border
+        use_box = boxborderw > 0 and str(boxcolor).strip().lower() not in {"", "transparent", "none"}
+        drawtext_parts = [
+            "drawtext=",
+            f"text='{safe_text}':",
+            f"fontcolor={fontcolor}:",
+            f"fontsize={fontsize}:",
+            f"box={1 if use_box else 0}:",
+        ]
+        if use_box:
+            drawtext_parts.append(f"boxcolor={boxcolor}:")
+            drawtext_parts.append(f"boxborderw={boxborderw}:")
+
+        drawtext_parts.extend([
+            "x=(w-text_w)/2:",
+            f"y={y_pos}:",
+            f"line_spacing={line_spacing}:",
+            "font=Sans:",
+            "fix_bounds=true",
+            f"{extra}",
+        ])
+        drawtext_filter = "".join(drawtext_parts)
 
         filter_complex = (
             f"[0:v]"
