@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 PEXELS_API_BASE = "https://api.pexels.com/videos"
 PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
 NASA_SEARCH_API = "https://images-api.nasa.gov/search"
-ESA_SEARCH_API = "https://api.esa.int/v2/feed"
+ESA_SEARCH_API = "https://www.esa.int/ESA_Multimedia/Videos"
 CACHE_DIR = Path("/app/cache/videos")
 
 # Semantic embedding model (lazy-loaded)
@@ -85,6 +85,7 @@ def _detect_intro_seconds(title: str, description: str) -> float:
 _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
 _ESA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
+_ESA_DETAIL_CACHE: dict[str, Optional[dict]] = {}
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -1155,51 +1156,36 @@ def _search_esa_candidates(
     per_page: int = 10,
     page: int = 1,
 ) -> list[dict]:
-    """Search ESA (European Space Agency) multimedia API for video clips."""
+    """Search ESA multimedia website and return video clip candidates."""
     cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)))
     cached = _ESA_QUERY_CACHE.get(cache_key)
     if cached is not None:
         return [dict(item) for item in cached]
 
-    params = {
-        "q": query,
-        "type": "Video",
-        "page": max(1, int(page)),
-    }
-
-    try:
-        resp = requests.get(
-            ESA_SEARCH_API,
-            params=params,
-            timeout=20,
-            headers={"User-Agent": "VideoGen/1.0"},
-        )
-        resp.raise_for_status()
-        payload = resp.json() or {}
-    except Exception as e:
-        print(f"[VideoSearch] ESA search request failed: {e}")
-        return []
-
-    items = payload.get("esa", {}).get("item", [])
-    if not items:
+    entries = _fetch_esa_video_entries(page=max(1, int(page)))
+    if not entries:
         _ESA_QUERY_CACHE[cache_key] = []
         return []
-
-    if not isinstance(items, list):
-        items = [items]
 
     query_terms = _extract_terms(query)
     candidates = []
 
-    for item in items[: max(1, per_page)]:
-        # Extract fields from ESA response
-        title = str(item.get("title", "")).strip() if item.get("title") else ""
-        description = str(item.get("description", "")).strip() if item.get("description") else ""
+    # Rank rough relevance by title first; then resolve direct media URLs.
+    ranked_entries = sorted(
+        entries,
+        key=lambda entry: _text_relevance_score(query_terms, f"{entry.get('title', '')} {entry.get('url', '')}"),
+        reverse=True,
+    )
 
-        # ESA payload can vary; collect URLs recursively from the entire item.
-        all_urls = _collect_urls_from_esa_item(item)
-        video_url = _pick_best_esa_video_url(all_urls)
-        thumbnail = _pick_best_esa_thumbnail_url(all_urls)
+    for entry in ranked_entries[: max(1, per_page * 3)]:
+        detail = _resolve_esa_video_detail(entry.get("url", ""))
+        if not detail:
+            continue
+
+        title = str(detail.get("title") or entry.get("title") or "").strip()
+        description = str(detail.get("description") or "").strip()
+        video_url = str(detail.get("video_url") or "").strip()
+        thumbnail = str(detail.get("thumbnail") or "").strip()
 
         if not video_url:
             continue
@@ -1221,6 +1207,9 @@ def _search_esa_candidates(
             "duration": max(min_duration, 10),  # ESA videos are typically longer
             "skip_seconds": skip_seconds,
         })
+
+        if len(candidates) >= max(1, per_page):
+            break
 
     result = sorted(candidates, key=lambda c: c.get("score", 0), reverse=True)
     _ESA_QUERY_CACHE[cache_key] = [dict(item) for item in result]
@@ -1254,6 +1243,88 @@ def _collect_urls_from_esa_item(value) -> list[str]:
             seen.add(u)
             unique.append(u)
     return unique
+
+
+def _fetch_esa_video_entries(page: int = 1) -> list[dict]:
+    """Fetch ESA multimedia video list page and extract video detail links."""
+    list_url = ESA_SEARCH_API if page <= 1 else f"{ESA_SEARCH_API}/(page)/{page}"
+
+    try:
+        resp = requests.get(
+            list_url,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0 (VideoGen bot)"},
+        )
+        resp.raise_for_status()
+        html = resp.text or ""
+    except Exception as e:
+        print(f"[VideoSearch] ESA list request failed: {e}")
+        return []
+
+    # ESA links are typically relative and include year/month/slug.
+    rel_links = re.findall(r'href="(/ESA_Multimedia/Videos/\d{4}/\d{2}/[^"]+)"', html)
+    if not rel_links:
+        return []
+
+    entries = []
+    seen = set()
+    for rel in rel_links:
+        full_url = f"https://www.esa.int{rel}"
+        if full_url in seen:
+            continue
+        seen.add(full_url)
+        slug = rel.rstrip("/").split("/")[-1]
+        title = slug.replace("_", " ")
+        entries.append({"url": full_url, "title": title})
+    return entries
+
+
+def _resolve_esa_video_detail(detail_url: str) -> Optional[dict]:
+    """Resolve direct video URL from an ESA detail page."""
+    if not detail_url:
+        return None
+
+    if detail_url in _ESA_DETAIL_CACHE:
+        cached = _ESA_DETAIL_CACHE[detail_url]
+        return dict(cached) if cached else None
+
+    try:
+        resp = requests.get(
+            detail_url,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0 (VideoGen bot)"},
+        )
+        resp.raise_for_status()
+        html = resp.text or ""
+    except Exception as e:
+        print(f"[VideoSearch] ESA detail request failed: {e}")
+        _ESA_DETAIL_CACHE[detail_url] = None
+        return None
+
+    # Extract candidate URLs from page source.
+    urls = re.findall(r'https?://[^"\'\s)]+', html, flags=re.IGNORECASE)
+    urls = [u.strip() for u in urls if u.strip()]
+
+    video_url = _pick_best_esa_video_url(urls)
+    thumbnail = _pick_best_esa_thumbnail_url(urls)
+
+    title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html, flags=re.IGNORECASE)
+    desc_match = re.search(r'<meta\s+property="og:description"\s+content="([^"]+)"', html, flags=re.IGNORECASE)
+    title = title_match.group(1).strip() if title_match else ""
+    description = desc_match.group(1).strip() if desc_match else ""
+
+    if not video_url:
+        _ESA_DETAIL_CACHE[detail_url] = None
+        return None
+
+    result = {
+        "title": title,
+        "description": description,
+        "video_url": video_url,
+        "thumbnail": thumbnail,
+    }
+    _ESA_DETAIL_CACHE[detail_url] = dict(result)
+    return result
 
 
 def _pick_best_esa_video_url(urls: list[str]) -> Optional[str]:
