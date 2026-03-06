@@ -10,7 +10,11 @@ services:
       - ./.env:/app/.env
     env_file:
       - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
     restart: unless-stopped
+    depends_on:
+      - ollama
     deploy:
       resources:
         limits:
@@ -34,10 +38,23 @@ services:
     command: ["python", "telegram_bot.py"]
     env_file:
       - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
       - backend
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: videogen-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
     restart: unless-stopped
 
 volumes:
   output:
   cache:
+  ollama:
