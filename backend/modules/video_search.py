@@ -98,6 +98,7 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 # Auto-cleanup configuration (strict defaults for VPS stability)
+ENABLE_AUTO_CACHE_CLEANUP = _bool_env("ENABLE_AUTO_CACHE_CLEANUP", False)  # Disabled by default to prevent race conditions
 MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))  # Default 800MB
 MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))  # Default 1 day
 MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))  # If >0, overrides days
@@ -121,8 +122,13 @@ def _cleanup_cache_if_needed(force: bool = False):
     """
     Automatically clean up cache if it exceeds size limit or files are too old.
     Runs at most every CACHE_CLEANUP_INTERVAL_SECONDS unless force=True.
+    Only runs automatically if ENABLE_AUTO_CACHE_CLEANUP=true (disabled by default).
     """
     global _LAST_CLEANUP_TIME
+    
+    # Skip automatic cleanup if disabled (manual cleanup via force=True always works)
+    if not force and not ENABLE_AUTO_CACHE_CLEANUP:
+        return
     
     now = datetime.now()
     if not force and (now - _LAST_CLEANUP_TIME).total_seconds() < CACHE_CLEANUP_INTERVAL_SECONDS:
