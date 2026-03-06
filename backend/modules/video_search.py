@@ -1,18 +1,37 @@
 """
 Video Search Module — Pexels + Pixabay + NASA + ESA APIs
 Searches and downloads stock video clips matching a keyword query.
+Uses local semantic embeddings for intelligent video matching.
 """
 import hashlib
 import re
 import requests
 from pathlib import Path
 from typing import Optional
+import numpy as np
 
 PEXELS_API_BASE = "https://api.pexels.com/videos"
 PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
 NASA_SEARCH_API = "https://images-api.nasa.gov/search"
 ESA_SEARCH_API = "https://api.esa.int/v2/feed"
 CACHE_DIR = Path("/app/cache/videos")
+
+# Semantic embedding model (lazy-loaded)
+_EMBEDDING_MODEL = None
+
+def _get_embedding_model():
+    """Lazy-load the embedding model on first use."""
+    global _EMBEDDING_MODEL
+    if _EMBEDDING_MODEL is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            print("[VideoSearch] Loading semantic embedding model...")
+            _EMBEDDING_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
+            print("[VideoSearch] Semantic model loaded successfully")
+        except Exception as e:
+            print(f"[VideoSearch] Failed to load semantic model: {e}")
+            _EMBEDDING_MODEL = False  # Mark as unavailable
+    return _EMBEDDING_MODEL if _EMBEDDING_MODEL is not False else None
 
 _NASA_ASSET_CACHE: dict[str, Optional[str]] = {}
 _NASA_QUERY_CACHE: dict[tuple[str, int, int], list[dict]] = {}
@@ -1010,12 +1029,36 @@ def _extract_terms(text: str, max_terms: int = 12) -> list[str]:
 
 
 def _text_relevance_score(query_terms: list[str], metadata_text: str) -> float:
-    if not query_terms:
+    """
+    Score relevance using semantic embeddings if available, falls back to keyword matching.
+    Returns a score between 0 and 1.
+    """
+    if not query_terms and not metadata_text:
         return 0.0
 
+    # Try semantic matching first
+    model = _get_embedding_model()
+    if model:
+        try:
+            query_text = " ".join(query_terms)
+            query_embedding = model.encode(query_text, convert_to_numpy=True)
+            metadata_embedding = model.encode(metadata_text, convert_to_numpy=True)
+            
+            # Cosine similarity: dot product / (norm1 * norm2)
+            similarity = np.dot(query_embedding, metadata_embedding) / (
+                np.linalg.norm(query_embedding) * np.linalg.norm(metadata_embedding) + 1e-8
+            )
+            # Normalize from [-1, 1] to [0, 1]
+            normalized_score = (float(similarity) + 1.0) / 2.0
+            return min(1.0, max(0.0, normalized_score))
+        except Exception as e:
+            print(f"[VideoSearch] Semantic scoring failed: {e}, falling back to keyword matching")
+
+    # Fallback: keyword matching
     metadata_terms = set(_extract_terms(metadata_text, max_terms=60))
     if not metadata_terms:
         return 0.0
 
     hits = sum(1 for term in query_terms if term in metadata_terms)
     return hits / max(1, len(query_terms))
+
