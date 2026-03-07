@@ -1026,6 +1026,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                     exclude_urls=used_video_urls,
                     segment_index=i,
                     used_providers=used_providers,
+                    generation_id=job_id,
                 )
                 source_video_path = auto_video_result["path"]
                 video_path = str(job_dir / f"video_{i:03d}.mp4")

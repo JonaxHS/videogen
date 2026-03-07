@@ -509,6 +509,7 @@ def search_and_download_video_info(
     exclude_urls: set[str] | None = None,
     segment_index: int = 0,
     used_providers: list[str] | None = None,
+    generation_id: str | None = None,
 ) -> dict:
     """
     Search and download best video for a segment.
@@ -518,7 +519,10 @@ def search_and_download_video_info(
     search_limit = 6
     
     # Generate unique seed for this segment to avoid repetition
-    search_seed = hashlib.md5(f"{keywords}:{segment_index}:{context_text[:50]}".encode()).hexdigest()[:8]
+    if generation_id:
+        search_seed = hashlib.md5(f"{generation_id}:{segment_index}".encode()).hexdigest()[:8]
+    else:
+        search_seed = hashlib.md5(f"{keywords}:{segment_index}:{context_text[:50]}".encode()).hexdigest()[:8]
     
     options = search_video_options(
         keywords=keywords,
