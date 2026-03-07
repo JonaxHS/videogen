@@ -581,7 +581,6 @@ def generate_detailed_reel(req: ScriptGenerationRequest):
     except Exception as e:
         print(f"[DetailedReel] Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error al generar reel: {str(e)}")
-    }
 
 
 def _generate_script_with_ollama(topic: str, tone: str, duration_seconds: int, language: str = "es") -> str:
