@@ -354,25 +354,21 @@ def _compose_segment(
     if skip_seconds >= video_dur - 0.5:
         skip_seconds = 0.0  # Don't skip if video is too short to survive the trim
 
-    # Build video input options: -stream_loop FIRST, then -ss (seek)
-    # This ensures loop is applied correctly with intro trimming
+    # Build video input options. 
+    # IMPORTANT: -stream_loop MUST come before -i, but -ss must come AFTER the maps (output-side seek)
+    # Placing -ss before -i with -stream_loop causes FFmpeg to seek the raw file BEFORE the loop
+    # activates, hitting EOF instantly when video is shorter than skip_seconds (e.g. 5s clip, 12s NASA skip).
     video_input_options = []
-    
-    needs_loop = True
-    if video_dur > 0 and video_dur >= (audio_duration + skip_seconds):
-        needs_loop = False
-        
     if needs_loop:
         # -fflags +genpts prevents frame=0 dropping from reset timestamps in loops
         video_input_options.extend(["-stream_loop", "-1", "-fflags", "+genpts"])
-        
-    if skip_seconds > 0.0:
-        video_input_options.extend(["-ss", str(skip_seconds)])
+
+    skip_opts = [] if skip_seconds <= 0.0 else ["-ss", str(skip_seconds)]  # Output-side seek (loop already active)
 
     if audio_path:
         cmd = [
             "ffmpeg", "-y",
-            *video_input_options,          # Loop and optional intro trim for NASA clips
+            *video_input_options,          # Loop args BEFORE -i (activates the loop)
             "-i", video_path,            # Input 0: video
             "-i", audio_path,            # Input 1: TTS audio
             "-filter_complex", filter_complex,
@@ -383,7 +379,8 @@ def _compose_segment(
             "-crf", "23",
             "-c:a", "aac",
             "-b:a", "128k",
-            "-t", str(audio_duration),   # Trim to target duration (applies to both streams)
+            "-t", str(audio_duration),   # Trim to target duration
+            *skip_opts,                   # Output-side seek: skips intro AFTER loop is active
             output_path
         ]
     else:
@@ -396,8 +393,9 @@ def _compose_segment(
             "-c:v", "libx264",
             "-preset", "fast",
             "-crf", "23",
-            "-an",                       # No audio for preview mode
+            "-an",
             "-t", str(audio_duration),
+            *skip_opts,                   # Output-side seek
             output_path
         ]
 
