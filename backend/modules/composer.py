@@ -319,7 +319,7 @@ def _compose_segment(
         filter_complex = (
             f"[0:v]"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop=min(iw\\,{OUTPUT_WIDTH}):min(ih\\,{OUTPUT_HEIGHT}):(iw-min(iw\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\,{OUTPUT_HEIGHT}))/2,"
+            f"crop=min(iw\\\\,{OUTPUT_WIDTH}):min(ih\\\\,{OUTPUT_HEIGHT}):(iw-min(iw\\\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\\\,{OUTPUT_HEIGHT}))/2,"
             f"setsar=1,"
             f"fps={FPS}"
             f"[scaled];"
@@ -331,7 +331,7 @@ def _compose_segment(
         filter_complex = (
             f"[0:v]"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop=min(iw\\,{OUTPUT_WIDTH}):min(ih\\,{OUTPUT_HEIGHT}):(iw-min(iw\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\,{OUTPUT_HEIGHT}))/2,"
+            f"crop=min(iw\\\\,{OUTPUT_WIDTH}):min(ih\\\\,{OUTPUT_HEIGHT}):(iw-min(iw\\\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\\\,{OUTPUT_HEIGHT}))/2,"
             f"setsar=1,"
             f"fps={FPS}"
             f"[out]"
@@ -412,7 +412,7 @@ def _compose_segment(
                 fallback_filter = (
                     f"[0:v]"
                     f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-                    f"crop=min(iw\\,{OUTPUT_WIDTH}):min(ih\\,{OUTPUT_HEIGHT}):(iw-min(iw\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\,{OUTPUT_HEIGHT}))/2,"
+                    f"crop=min(iw\\\\,{OUTPUT_WIDTH}):min(ih\\\\,{OUTPUT_HEIGHT}):(iw-min(iw\\\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\\\,{OUTPUT_HEIGHT}))/2,"
                     f"setsar=1,"
                     f"fps={FPS}"
                     f"[out]"
