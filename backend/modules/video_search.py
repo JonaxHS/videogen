@@ -649,9 +649,10 @@ def search_video_options(
     ] if global_search else []
 
     quick_mode = (not global_search) and limit <= 2
-    pexels_per_page = 20 if quick_mode else (40 if global_search else 20)
-    pixabay_per_page = 25 if quick_mode else (50 if global_search else 25)
-    nasa_per_page = 6 if quick_mode else (20 if (global_search or prefer_nasa) else 10)
+    pool_multiplier = 2 if search_seed else 1
+    pexels_per_page = (20 if quick_mode else (40 if global_search else 20)) * pool_multiplier
+    pixabay_per_page = (25 if quick_mode else (50 if global_search else 25)) * pool_multiplier
+    nasa_per_page = (6 if quick_mode else (20 if (global_search or prefer_nasa) else 10)) * pool_multiplier
 
     all_candidates = []
     nasa_query_candidates = []
@@ -694,6 +695,7 @@ def search_video_options(
                         min_duration,
                         per_page=nasa_per_page,
                         page=page,
+                        search_seed=search_seed,
                     )
                 )
         if use_esa:
@@ -707,6 +709,7 @@ def search_video_options(
                         min_duration,
                         per_page=esa_per_page,
                         page=page,
+                        search_seed=search_seed,
                     )
                 )
 
@@ -752,6 +755,7 @@ def search_video_options(
                         min_duration,
                         per_page=nasa_per_page,
                         page=page,
+                        search_seed=search_seed,
                     )
                 )
         if use_esa:
@@ -765,6 +769,7 @@ def search_video_options(
                         min_duration,
                         per_page=esa_per_page,
                         page=page,
+                        search_seed=search_seed,
                     )
                 )
 
@@ -799,6 +804,7 @@ def search_video_options(
                             min_duration,
                             per_page=nasa_per_page,
                             page=page,
+                            search_seed=search_seed,
                         )
                     )
                 elif provider_name == "esa":
@@ -808,6 +814,7 @@ def search_video_options(
                             min_duration,
                             per_page=esa_per_page,
                             page=page,
+                            search_seed=search_seed,
                         )
                     )
 
@@ -938,6 +945,7 @@ def search_video_options(
             min_duration=min_duration,
             per_page=max(6, nasa_per_page),
             page=1,
+            search_seed=search_seed,
         )
         if fallback_nasa:
             return fallback_nasa[: max(1, limit)]
@@ -1212,8 +1220,9 @@ def _search_nasa_candidates(
     min_duration: int,
     per_page: int = 10,
     page: int = 1,
+    search_seed: str = "",
 ) -> list[dict]:
-    cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)))
+    cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)), search_seed)
     cached = _NASA_QUERY_CACHE.get(cache_key)
     if cached is not None:
         return [dict(item) for item in cached]
@@ -1241,6 +1250,14 @@ def _search_nasa_candidates(
     if not items:
         _NASA_QUERY_CACHE[cache_key] = []
         return []
+
+    if search_seed and items:
+        seeded = []
+        for i, it in enumerate(items):
+            key_val = int(hashlib.md5(f"{search_seed}|{i}".encode()).hexdigest()[:8], 16)
+            seeded.append((it, key_val))
+        seeded.sort(key=lambda x: x[1])
+        items = [x[0] for x in seeded]
 
     query_terms = _extract_terms(query)
     candidates = []
@@ -1426,9 +1443,10 @@ def _search_esa_candidates(
     min_duration: int,
     per_page: int = 10,
     page: int = 1,
+    search_seed: str = "",
 ) -> list[dict]:
     """Search ESA multimedia website and return video clip candidates."""
-    cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)))
+    cache_key = (query.lower().strip(), max(1, int(per_page)), max(1, int(page)), search_seed)
     cached = _ESA_QUERY_CACHE.get(cache_key)
     if cached is not None:
         return [dict(item) for item in cached]
@@ -1442,11 +1460,15 @@ def _search_esa_candidates(
     candidates = []
 
     # Rank rough relevance by title first; then resolve direct media URLs.
-    ranked_entries = sorted(
-        entries,
-        key=lambda entry: _text_relevance_score(query_terms, f"{entry.get('title', '')} {entry.get('url', '')}"),
-        reverse=True,
-    )
+    def esa_sort_key(entry):
+        base_score = _text_relevance_score(query_terms, f"{entry.get('title', '')} {entry.get('url', '')}")
+        if search_seed:
+            key_val = int(hashlib.md5(f"{search_seed}|{entry.get('url', '')}".encode()).hexdigest()[:8], 16)
+            jitter = (key_val % 1000) / 1000.0
+            return base_score + jitter
+        return base_score
+
+    ranked_entries = sorted(entries, key=esa_sort_key, reverse=True)
 
     for entry in ranked_entries[: max(1, per_page * 3)]:
         detail = _resolve_esa_video_detail(entry.get("url", ""))

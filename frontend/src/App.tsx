@@ -128,7 +128,7 @@ function VideoReplacementModal({
     const [searchResults, setSearchResults] = useState<VideoOption[]>([])
     const [defaultGlobalOptions, setDefaultGlobalOptions] = useState<VideoOption[]>([])
     const [selectedProviders, setSelectedProviders] = useState<string[]>(['pexels', 'pixabay', 'nasa', 'esa'])
-    const [searchSeed, setSearchSeed] = useState<string>(() => String(Date.now()))
+    const [searchSeed, setSearchSeed] = useState<string>(() => String(Date.now() + Math.floor(Math.random() * 10000)))
     const [searchPage, setSearchPage] = useState(1)
     const [searchLoading, setSearchLoading] = useState(false)
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
