@@ -1136,5 +1136,19 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         try:
             if job_dir.exists():
                 shutil.rmtree(job_dir, ignore_errors=True)
+                
+            # Auto-cleanup: also sweep any loose files/dirs older than 6 hours in TEMP_DIR.
+            import time as _time
+            cutoff_ts = _time.time() - (6 * 3600)
+            if TEMP_DIR.exists():
+                for sibling in TEMP_DIR.iterdir():
+                    try:
+                        if sibling.stat().st_mtime < cutoff_ts:
+                            if sibling.is_dir():
+                                shutil.rmtree(sibling, ignore_errors=True)
+                            else:
+                                sibling.unlink()
+                    except Exception:
+                        continue
         except Exception as cleanup_err:
             print(f"[Cleanup] Could not remove temp dir {job_dir}: {cleanup_err}")
