@@ -380,10 +380,21 @@ def _compose_segment(
             output_path
         ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    try:
+        print(f"[Composer] Composing segment: {output_path}")
+        print(f"[Composer] Audio duration: {audio_duration}s, Skip: {skip_seconds}s")
+        print(f"[Composer] FFmpeg cmd: {' '.join(cmd[:10])}...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
+        if result.returncode != 0:
+            error_msg = result.stderr[-1500:] if result.stderr else "Unknown error"
+            print(f"[Composer] FFmpeg stderr: {error_msg}")
+            raise RuntimeError(
+                f"FFmpeg error composing segment:\n{error_msg}"
+            )
+        print(f"[Composer] ✓ Segment composed successfully")
+    except subprocess.TimeoutExpired:
         raise RuntimeError(
-            f"FFmpeg error composing segment:\n{result.stderr[-1000:]}"
+            f"FFmpeg timeout (>300s) composing segment. Check video/audio duration compatibility."
         )
 
 
@@ -610,11 +621,15 @@ def add_attribution_watermark(
     ]
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
         if result.returncode != 0:
             print(f"[Attribution] FFmpeg error: {result.stderr[-500:]}")
             # Fallback: copy without watermark
             subprocess.run(["cp", video_path, output_path], check=True, capture_output=True)
+        return output_path
+    except subprocess.TimeoutExpired:
+        print(f"[Attribution] FFmpeg timeout (>300s), using fallback copy")
+        subprocess.run(["cp", video_path, output_path], check=True, capture_output=True)
         return output_path
     except Exception as e:
         print(f"[Attribution] Error adding watermark: {e}, using fallback")

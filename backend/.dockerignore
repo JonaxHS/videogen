@@ -1,0 +1,30 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# Local env/cache
+.env
+.venv/
+venv/
+env/
+.cache/
+
+# App runtime data (very heavy in VPS)
+cache/
+output/
+temp/
+*.mp4
+*.mp3
+*.wav
+*.log
+
+# VCS / editor
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store

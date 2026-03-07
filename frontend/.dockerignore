@@ -1,0 +1,14 @@
+# Node
+node_modules/
+dist/
+
+# Env/editor
+.env
+.env.local
+.vscode/
+.idea/
+.DS_Store
+
+# VCS
+.git/
+.gitignore
