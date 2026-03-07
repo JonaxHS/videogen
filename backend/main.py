@@ -391,23 +391,50 @@ def cleanup_cache():
         
         # Get cache size before
         cache_size_before = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0
+        temp_size_before = sum(f.stat().st_size for f in TEMP_DIR.rglob("*") if f.is_file()) / (1024*1024) if TEMP_DIR.exists() else 0
         
         # Clean up old files using configured target
         target_mb = max(200, float(MAX_CACHE_SIZE_MB) * 0.8)
         protect_recent_seconds = int(os.getenv("PROTECT_RECENT_CACHE_SECONDS", "1800"))
         _cleanup_old_files(target_mb=target_mb, protect_recent_seconds=protect_recent_seconds)
         _cleanup_cache_if_needed(force=True)
+
+        # Also cleanup stale temp job folders (cache/temp/*) older than configured threshold
+        temp_max_age_hours = int(os.getenv("TEMP_JOB_MAX_AGE_HOURS", "6"))
+        temp_cutoff_ts = (Path(".").stat().st_mtime)  # fallback init
+        try:
+            import time as _time
+            temp_cutoff_ts = _time.time() - (temp_max_age_hours * 3600)
+        except Exception:
+            pass
+
+        removed_temp_dirs = 0
+        if TEMP_DIR.exists():
+            for child in TEMP_DIR.iterdir():
+                if not child.is_dir():
+                    continue
+                try:
+                    if child.stat().st_mtime < temp_cutoff_ts:
+                        shutil.rmtree(child, ignore_errors=True)
+                        removed_temp_dirs += 1
+                except Exception:
+                    continue
         
         # Get cache size after
         cache_size_after = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0
+        temp_size_after = sum(f.stat().st_size for f in TEMP_DIR.rglob("*") if f.is_file()) / (1024*1024) if TEMP_DIR.exists() else 0
         freed_mb = cache_size_before - cache_size_after
+        freed_temp_mb = temp_size_before - temp_size_after
         
         return {
             "success": True,
-            "message": f"Limpieza completada. Se liberaron {freed_mb:.1f}MB",
+            "message": f"Limpieza completada. Cache liberado: {freed_mb:.1f}MB, Temp liberado: {freed_temp_mb:.1f}MB",
             "cache_size_before": f"{cache_size_before:.1f}MB",
             "cache_size_after": f"{cache_size_after:.1f}MB",
-            "freed": f"{freed_mb:.1f}MB"
+            "temp_size_before": f"{temp_size_before:.1f}MB",
+            "temp_size_after": f"{temp_size_after:.1f}MB",
+            "temp_dirs_removed": removed_temp_dirs,
+            "freed": f"{freed_mb + freed_temp_mb:.1f}MB"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
@@ -1103,3 +1130,11 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         job["message"] = f"Error: {str(e)}"
         import traceback
         traceback.print_exc()
+
+    finally:
+        # Always cleanup per-job temp directory to prevent /app/cache/temp growth.
+        try:
+            if job_dir.exists():
+                shutil.rmtree(job_dir, ignore_errors=True)
+        except Exception as cleanup_err:
+            print(f"[Cleanup] Could not remove temp dir {job_dir}: {cleanup_err}")
