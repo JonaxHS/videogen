@@ -28,7 +28,7 @@ from modules.video_search import (
     download_video_from_url,
     infer_provider_from_url,
 )
-from modules.composer import compose_video, get_audio_duration
+from modules.composer import compose_video, get_audio_duration, generate_attribution_text
 
 ENV_FILE = Path("/app/.env") if Path("/app/.env").exists() else Path(".env")
 load_dotenv(dotenv_path=ENV_FILE, override=True)
@@ -827,13 +827,19 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             job["progress"] = pct
             job["message"] = msg
 
-        compose_video(
+        # Compose video with attribution
+        output_path, sources_used = compose_video(
             composed_segments,
             output_path,
             progress_callback=progress_cb,
             show_subtitles=show_subtitles,
             subtitle_style=subtitle_style,
+            add_attribution=True,  # Always add attribution
         )
+        
+        # Store sources metadata
+        job["sources_used"] = sources_used
+        job["attribution"] = generate_attribution_text(sources_used)
 
         job["status"] = "done"
         job["progress"] = 100

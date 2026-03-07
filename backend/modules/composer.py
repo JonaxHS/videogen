@@ -99,27 +99,36 @@ def compose_video(
     progress_callback: Callable[[int, str], None] = None,
     show_subtitles: bool = True,
     subtitle_style: str = DEFAULT_SUBTITLE_STYLE,
-) -> str:
+    add_attribution: bool = True,
+) -> tuple:
     """
     Compose all segments into a final reel video using FFmpeg.
+    Automatically adds attribution watermark for NASA/ESA sources.
 
-        Each segment dict must have:
-            - video_path: str
-            - text: str
-            - audio_duration: float (seconds)
-        Optional:
-            - audio_path: str (if omitted, segment will be rendered without audio)
+    Each segment dict must have:
+        - video_path: str
+        - text: str
+        - audio_duration: float (seconds)
+    Optional:
+        - audio_path: str (if omitted, segment will be rendered without audio)
+        - video_provider: str (nasa, esa, pexels, pixabay, manual)
 
     Args:
       subtitle_style: one of the keys in SUBTITLE_STYLES
+      add_attribution: if True, add watermark with source credits
     
-    Returns path to the final video file.
+    Returns:
+        tuple: (output_path, sources_dict)
+        sources_dict = {'nasa': 1, 'esa': 0, 'pexels': 2, 'pixabay': 0}
     """
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     # Validate subtitle style
     if subtitle_style not in SUBTITLE_STYLES:
         subtitle_style = DEFAULT_SUBTITLE_STYLE
+
+    # Extract sources used
+    sources_used = get_sources_from_segments(segments)
 
     temp_dir = Path(output_path).parent / "temp_segments"
     temp_dir.mkdir(exist_ok=True)
@@ -159,14 +168,35 @@ def compose_video(
             # Use absolute path to ensure FFmpeg finds it reliably regardless of CWD parsing
             f.write(f"file '{Path(sf).resolve().as_posix()}'\n")
 
+    final_output = str(Path(output_path).parent / "final_concat.mp4")
+    
     subprocess.run([
         "ffmpeg", "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", str(concat_list_path),
         "-c", "copy",
-        output_path
+        final_output
     ], check=True, capture_output=True)
+
+    # Add attribution watermark if needed
+    if progress_callback:
+        progress_callback(90, "Verificando atribuciones...")
+    
+    if add_attribution and (sources_used['nasa'] > 0 or sources_used['esa'] > 0):
+        if progress_callback:
+            progress_callback(95, "Agregando créditos...")
+        attribution_text = generate_attribution_text(sources_used)
+        add_attribution_watermark(
+            video_path=final_output,
+            output_path=output_path,
+            attribution_text=attribution_text,
+            font_size=28,
+            position="bottom"
+        )
+    else:
+        # No attribution needed, move final to output
+        subprocess.run(["mv", final_output, output_path], check=True, capture_output=True)
 
     if progress_callback:
         progress_callback(100, "¡Video listo!")
@@ -183,9 +213,8 @@ def compose_video(
     except Exception:
         pass
 
-    return output_path
-
-    return output_path
+    # Return tuple with sources used
+    return output_path, sources_used
 
 
 def _compose_segment(
@@ -461,6 +490,137 @@ def _word_wrap(text: str, max_chars: int) -> str:
         lines.append(' '.join(current))
 
     return '\n'.join(lines)
+
+
+def get_sources_from_segments(segments: List[Dict]) -> Dict[str, int]:
+    """
+    Extract providers used from segments.
+    Returns dict with count: {'nasa': 2, 'pexels': 1, 'esa': 0, 'pixabay': 0}
+    """
+    sources = {
+        'nasa': 0,
+        'esa': 0,
+        'pexels': 0,
+        'pixabay': 0,
+        'manual': 0
+    }
+    
+    for segment in segments:
+        provider = segment.get('video_provider', 'manual').lower()
+        if provider in sources:
+            sources[provider] += 1
+    
+    return sources
+
+
+def generate_attribution_text(sources: Dict[str, int]) -> str:
+    """
+    Generate credit text based on sources used.
+    
+    Examples:
+    "Sources: NASA, Pexels" 
+    "Credit: ESA, Pixabay"
+    """
+    credits = []
+    
+    if sources.get('nasa', 0) > 0:
+        credits.append("NASA")
+    if sources.get('esa', 0) > 0:
+        credits.append("ESA")
+    if sources.get('pexels', 0) > 0:
+        credits.append("Pexels")
+    if sources.get('pixabay', 0) > 0:
+        credits.append("Pixabay")
+    
+    if not credits:
+        return ""
+    
+    # If contains NASA/ESA, specify more details
+    if 'NASA' in credits or 'ESA' in credits:
+        return f"Sources: {', '.join(credits)} | nasa.gov | esa.int"
+    else:
+        return f"Sources: {', '.join(credits)}"
+
+
+def add_attribution_watermark(
+    video_path: str,
+    output_path: str,
+    attribution_text: str,
+    font_size: int = 28,
+    position: str = "bottom"
+) -> str:
+    """
+    Add attribution credit watermark to final 3 seconds of video.
+    
+    Args:
+        video_path: original video path
+        output_path: where to save with watermark
+        attribution_text: credit text to display
+        font_size: font size (default 28)
+        position: "bottom" or "top"
+    
+    Returns:
+        path to video with watermark
+    """
+    if not attribution_text:
+        # No credits, copy original
+        subprocess.run(["cp", video_path, output_path], check=True, capture_output=True)
+        return output_path
+    
+    try:
+        # Get video duration
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=10
+        )
+        duration = float(result.stdout.strip())
+    except Exception as e:
+        print(f"[Attribution] Error getting duration: {e}, using fallback 60s")
+        duration = 60.0
+    
+    # Show credit in last 3 seconds
+    start_time = max(0, duration - 3)
+    
+    # Configure position
+    y_pos = "h-50" if position == "bottom" else "50"
+    
+    # Escape quotes in attribution text
+    escaped_text = attribution_text.replace("'", "\\'")
+    
+    # FFmpeg filter to add text
+    filter_complex = (
+        f"drawtext=text='{escaped_text}':"
+        f"fontsize={font_size}:"
+        f"fontcolor=white:"
+        f"shadowx=2:shadowy=2:shadowcolor=black@0.8:"
+        f"x='(w-text_w)/2':"
+        f"y={y_pos}:"
+        f"enable='between(t,{start_time},{duration})'"
+    )
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vf", filter_complex,
+        "-c:a", "copy",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        output_path
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            print(f"[Attribution] FFmpeg error: {result.stderr[-500:]}")
+            # Fallback: copy without watermark
+            subprocess.run(["cp", video_path, output_path], check=True, capture_output=True)
+        return output_path
+    except Exception as e:
+        print(f"[Attribution] Error adding watermark: {e}, using fallback")
+        # Fallback: copy without watermark
+        subprocess.run(["cp", video_path, output_path], check=True, capture_output=True)
+        return output_path
 
 
 def get_audio_duration(audio_path: str) -> float:
