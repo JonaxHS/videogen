@@ -341,10 +341,13 @@ def _compose_segment(
     if skip_seconds == 0.0 and is_esa_clip:
         skip_seconds = ESA_INTRO_SKIP_SECONDS
 
-    # Put -ss BEFORE -stream_loop for correct intro trimming
-    video_input_options = ["-stream_loop", "-1"]
+    # Build video input options: -stream_loop FIRST, then -ss (seek)
+    # This ensures loop is applied correctly with intro trimming
+    video_input_options = []
     if skip_seconds > 0.0:
-        video_input_options = ["-ss", str(skip_seconds), "-stream_loop", "-1"]
+        video_input_options = ["-stream_loop", "-1", "-ss", str(skip_seconds)]
+    else:
+        video_input_options = ["-stream_loop", "-1"]
 
     if audio_path:
         cmd = [
@@ -360,8 +363,7 @@ def _compose_segment(
             "-crf", "23",
             "-c:a", "aac",
             "-b:a", "128k",
-            "-t", str(audio_duration),   # Trim to target duration
-            "-shortest",
+            "-t", str(audio_duration),   # Trim to target duration (applies to both streams)
             output_path
         ]
     else:
@@ -376,18 +378,38 @@ def _compose_segment(
             "-crf", "23",
             "-an",                       # No audio for preview mode
             "-t", str(audio_duration),
-            "-shortest",
             output_path
         ]
 
     try:
         print(f"[Composer] Composing segment: {output_path}")
-        print(f"[Composer] Audio duration: {audio_duration}s, Skip: {skip_seconds}s")
-        print(f"[Composer] FFmpeg cmd: {' '.join(cmd[:10])}...")
+        print(f"[Composer] Audio duration: {audio_duration}s, Skip: {skip_seconds}s, Subtitles: {show_subtitles}")
+        print(f"[Composer] FFmpeg preset: fast, threads: auto")
+        if show_subtitles and "drawtext" in filter_complex:
+            print(f"[Composer] Filter chain: video scale/crop/fps + drawtext subtitles")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
         if result.returncode != 0:
             error_msg = result.stderr[-1500:] if result.stderr else "Unknown error"
-            print(f"[Composer] FFmpeg stderr: {error_msg}")
+            print(f"[Composer] FFmpeg error: {error_msg}")
+            
+            # Fallback: retry without subtitles if drawtext filter is in use
+            if show_subtitles and "drawtext" in filter_complex and "-shortest" not in str(cmd):
+                print(f"[Composer] Retrying without subtitles (fallback)...")
+                # Rebuild command without subtitles
+                fallback_filter = (
+                    f"[0:v]"
+                    f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+                    f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(iw-{OUTPUT_WIDTH})/2:(ih-{OUTPUT_HEIGHT})/2,"
+                    f"fps={FPS}"
+                    f"[out]"
+                )
+                fallback_cmd = cmd.copy()
+                fallback_cmd[fallback_cmd.index("-filter_complex") + 1] = fallback_filter
+                result = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    print(f"[Composer] ✓ Fallback (no subtitles) succeeded")
+                    return
+            
             raise RuntimeError(
                 f"FFmpeg error composing segment:\n{error_msg}"
             )
