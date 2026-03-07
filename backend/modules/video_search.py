@@ -103,6 +103,7 @@ MAX_CACHE_SIZE_MB = int(os.getenv("MAX_CACHE_SIZE_MB", "800"))  # Default 800MB
 MAX_FILE_AGE_DAYS = int(os.getenv("MAX_FILE_AGE_DAYS", "1"))  # Default 1 day
 MAX_FILE_AGE_HOURS = int(os.getenv("MAX_FILE_AGE_HOURS", "12"))  # If >0, overrides days
 CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
+PROTECT_RECENT_CACHE_SECONDS = int(os.getenv("PROTECT_RECENT_CACHE_SECONDS", "1800"))  # 30 min
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_VIDEO_RERANK_MODEL = os.getenv("OLLAMA_VIDEO_RERANK_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_VIDEO_VISION_MODEL = os.getenv("OLLAMA_VIDEO_VISION_MODEL", "qwen2.5vl:7b")
@@ -146,13 +147,20 @@ def _cleanup_cache_if_needed(force: bool = False):
         # Check size limit
         if total_size_mb > MAX_CACHE_SIZE_MB:
             print(f"[Cache] Size {total_size_mb:.1f}MB exceeds limit {MAX_CACHE_SIZE_MB}MB. Cleaning...")
-            _cleanup_old_files(target_mb=MAX_CACHE_SIZE_MB * 0.8)  # Clean to 80% of limit
+            _cleanup_old_files(
+                target_mb=MAX_CACHE_SIZE_MB * 0.8,
+                protect_recent_seconds=PROTECT_RECENT_CACHE_SECONDS,
+            )  # Clean to 80% of limit
         
         # Check file age (hours override days when configured)
         file_age_delta = timedelta(hours=MAX_FILE_AGE_HOURS) if MAX_FILE_AGE_HOURS > 0 else timedelta(days=MAX_FILE_AGE_DAYS)
         cutoff_time = (now - file_age_delta).timestamp()
+        recent_cutoff = (now - timedelta(seconds=PROTECT_RECENT_CACHE_SECONDS)).timestamp()
         for file_path in CACHE_DIR.rglob("*"):
             if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
+                # Skip files used recently to avoid deleting clips in active jobs.
+                if file_path.stat().st_mtime >= recent_cutoff:
+                    continue
                 try:
                     file_path.unlink()
                     print(f"[Cache] Removed old file: {file_path.name}")
@@ -163,7 +171,7 @@ def _cleanup_cache_if_needed(force: bool = False):
         print(f"[Cache] Cleanup error: {e}")
 
 
-def _cleanup_old_files(target_mb: float):
+def _cleanup_old_files(target_mb: float, protect_recent_seconds: int = 0):
     """Remove oldest files until cache is below target size."""
     if not CACHE_DIR.exists():
         return
@@ -177,10 +185,17 @@ def _cleanup_old_files(target_mb: float):
         (f for f in CACHE_DIR.rglob("*") if f.is_file()),
         key=lambda f: f.stat().st_mtime
     )
+
+    recent_cutoff = None
+    if protect_recent_seconds > 0:
+        recent_cutoff = (datetime.now() - timedelta(seconds=protect_recent_seconds)).timestamp()
     
     for file_path in files:
         if current_size <= target_mb:
             break
+
+        if recent_cutoff is not None and file_path.stat().st_mtime >= recent_cutoff:
+            continue
         
         file_size_mb = file_path.stat().st_size / (1024 * 1024)
         try:
@@ -942,6 +957,11 @@ def download_video_from_url(video_url: str, provider_hint: str = "manual") -> st
     cached_path = CACHE_DIR / f"{url_hash}.mp4"
 
     if cached_path.exists():
+        # Touch file to mark as recently used so cleanup won't delete it mid-generation.
+        try:
+            os.utime(cached_path, None)
+        except Exception:
+            pass
         return str(cached_path)
 
     try:

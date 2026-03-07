@@ -381,13 +381,21 @@ def cleanup_cache():
     """Clean up old cache files."""
     try:
         from modules.video_search import _cleanup_old_files, _cleanup_cache_if_needed, CACHE_DIR
+
+        active_jobs = [j for j in jobs.values() if j.get("status") in {"queued", "running"}]
+        if active_jobs:
+            raise HTTPException(
+                status_code=409,
+                detail="Hay una generación en curso. Intenta limpiar cache cuando termine para evitar borrar archivos en uso.",
+            )
         
         # Get cache size before
         cache_size_before = sum(f.stat().st_size for f in CACHE_DIR.rglob("*") if f.is_file()) / (1024*1024) if CACHE_DIR.exists() else 0
         
         # Clean up old files using configured target
         target_mb = max(200, float(MAX_CACHE_SIZE_MB) * 0.8)
-        _cleanup_old_files(target_mb=target_mb)
+        protect_recent_seconds = int(os.getenv("PROTECT_RECENT_CACHE_SECONDS", "1800"))
+        _cleanup_old_files(target_mb=target_mb, protect_recent_seconds=protect_recent_seconds)
         _cleanup_cache_if_needed(force=True)
         
         # Get cache size after
