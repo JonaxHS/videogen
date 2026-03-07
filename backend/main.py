@@ -967,6 +967,7 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         total = len(segments)
         composed_segments = []
         used_video_urls: set[str] = set()
+        used_providers: list[str] = []  # Track recent providers for diversity
 
         selected_videos = selected_videos or {}
 
@@ -1023,6 +1024,8 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                     context_text=seg["text"],
                     min_duration=max(3, int(audio_duration)),
                     exclude_urls=used_video_urls,
+                    segment_index=i,
+                    used_providers=used_providers,
                 )
                 source_video_path = auto_video_result["path"]
                 video_path = str(job_dir / f"video_{i:03d}.mp4")
@@ -1035,6 +1038,10 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                     provider_hint=video_provider,
                 )
                 video_skip_seconds = float(auto_video_result.get("skip_seconds", 0.0) or 0.0)
+                
+                # Track provider for diversity in next segments
+                used_providers.append(video_provider)
+                print(f"[Segment {i+1}] Provider: {video_provider}, Recent: {used_providers[-3:]}")
 
             # Track selected clip to avoid repetition in next segments
             used_video_urls.add(Path(video_path).name)

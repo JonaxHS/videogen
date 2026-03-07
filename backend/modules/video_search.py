@@ -507,7 +507,19 @@ def search_and_download_video_info(
     min_duration: int = 5,
     fallback_keywords: str = "nature landscape",
     exclude_urls: set[str] | None = None,
+    segment_index: int = 0,
+    used_providers: list[str] | None = None,
 ) -> dict:
+    """
+    Search and download best video for a segment.
+    Automatically diversifies providers across segments.
+    """
+    # Use larger pool to enable provider rotation
+    search_limit = 6
+    
+    # Generate unique seed for this segment to avoid repetition
+    search_seed = hashlib.md5(f"{keywords}:{segment_index}:{context_text[:50]}".encode()).hexdigest()[:8]
+    
     options = search_video_options(
         keywords=keywords,
         pexels_api_key=pexels_api_key,
@@ -515,18 +527,36 @@ def search_and_download_video_info(
         context_text=context_text,
         min_duration=min_duration,
         fallback_keywords=fallback_keywords,
-        limit=1,
+        limit=search_limit,
         exclude_urls=exclude_urls,
+        search_seed=search_seed,
     )
 
     if not options:
         raise RuntimeError(f"No video found for keywords: '{keywords}'")
-    top = options[0]
-    local_path = download_video_from_url(top["url"], provider_hint=top.get("provider", "manual"))
+    
+    # Intelligent provider rotation: avoid using same provider consecutively
+    used_providers = used_providers or []
+    recent_providers = set(used_providers[-2:])  # Last 2 providers used
+    
+    # Try to select from a different provider than recent ones
+    selected = None
+    for candidate in options:
+        provider = candidate.get("provider", "manual")
+        if provider not in recent_providers:
+            selected = candidate
+            break
+    
+    # Fallback: if all are from recent providers, use best one
+    if not selected:
+        selected = options[0]
+    
+    local_path = download_video_from_url(selected["url"], provider_hint=selected.get("provider", "manual"))
     return {
         "path": local_path,
-        "provider": top.get("provider", "manual"),
-        "url": top.get("url", ""),
+        "provider": selected.get("provider", "manual"),
+        "url": selected.get("url", ""),
+        "skip_seconds": selected.get("skip_seconds", 0.0),
     }
 
 
@@ -857,8 +887,20 @@ def search_video_options(
     limited = ranked[: max(1, limit)]
     
     # Provider diversification: ensure variety in results (avoid all videos from same source)
-    if limit >= 4 and len(limited) >= 4:
-        limited = _diversify_providers(limited, limit)
+    # Apply diversification when we have multiple results to choose from
+    if len(limited) >= 2 and len(ranked) >= 3:
+        # Check if all results are from the same provider
+        providers_in_limited = {c.get("provider") for c in limited}
+        if len(providers_in_limited) == 1 and len(ranked) > len(limited):
+            # Try to inject diversity by replacing last item with different provider
+            current_provider = list(providers_in_limited)[0]
+            for candidate in ranked[len(limited):]:
+                if candidate.get("provider") != current_provider:
+                    limited[-1] = candidate
+                    break
+        # Full diversification for larger result sets
+        elif len(limited) >= 4:
+            limited = _diversify_providers(limited, limit)
 
     # Ensure NASA/ESA appears in global searches when available (useful for astronomy-focused reels)
     if global_search and limited:
