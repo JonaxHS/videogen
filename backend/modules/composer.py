@@ -347,6 +347,11 @@ def _compose_segment(
     if skip_seconds == 0.0 and is_esa_clip:
         skip_seconds = ESA_INTRO_SKIP_SECONDS
 
+    # Prevent ffmpeg frame=0 bug: if -ss skips past EOF, stream_loop fails immediately
+    video_dur = get_audio_duration(video_path)  # Gets container duration
+    if skip_seconds >= video_dur - 0.5:
+        skip_seconds = 0.0  # Don't skip if video is too short to survive the trim
+
     # Build video input options: -stream_loop FIRST, then -ss (seek)
     # This ensures loop is applied correctly with intro trimming
     video_input_options = []
