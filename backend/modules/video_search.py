@@ -369,6 +369,104 @@ TERM_MAP = {
     "negro": "black",
 }
 
+# Semantic expansion: related terms for better video discovery
+SEMANTIC_EXPANSION = {
+    "space": ["cosmos", "universe", "galaxy", "nebula", "stars"],
+    "espacio": ["cosmos", "universo", "galaxia", "estrellas"],
+    "ocean": ["sea", "water", "waves", "marine", "underwater"],
+    "oceano": ["mar", "agua", "olas", "marino"],
+    "technology": ["digital", "innovation", "future", "computer", "ai"],
+    "tecnologia": ["digital", "innovacion", "futuro", "computadora"],
+    "city": ["urban", "downtown", "skyline", "street", "building"],
+    "ciudad": ["urbano", "edificios", "calle"],
+    "nature": ["forest", "landscape", "wildlife", "environment", "earth"],
+    "naturaleza": ["bosque", "paisaje", "ambiente", "tierra"],
+    "science": ["research", "laboratory", "experiment", "discovery"],
+    "ciencia": ["investigacion", "laboratorio", "experimento"],
+    "energy": ["power", "electricity", "solar", "wind", "renewable"],
+    "energia": ["poder", "electricidad", "solar", "renovable"],
+    "health": ["medical", "wellness", "fitness", "medicine", "care"],
+    "salud": ["medico", "bienestar", "medicina", "cuidado"],
+    "time": ["clock", "watch", "hour", "moment", "history"],
+    "tiempo": ["reloj", "hora", "momento", "historia"],
+    "people": ["human", "person", "crowd", "society", "community"],
+    "personas": ["humano", "gente", "sociedad", "comunidad"],
+}
+
+# Provider routing: which providers work best for specific topics
+PROVIDER_PREFERENCES = {
+    "nasa": ["space", "espacio", "planet", "planeta", "galaxy", "galaxia", "moon", "luna", 
+             "mars", "earth", "tierra", "solar", "star", "estrella", "cosmos", "universe", 
+             "universo", "astronaut", "astronauta", "satellite", "satelite", "orbit", "orbita",
+             "telescope", "telescopio", "nebula", "hubble"],
+    "esa": ["space", "espacio", "planet", "planeta", "galaxy", "galaxia", "earth", "tierra",
+            "satellite", "satelite", "orbit", "mars", "telescope", "telescopio", "cosmos",
+            "astronaut", "astronauta", "rocket", "cohete"],
+    "pexels": ["city", "ciudad", "people", "personas", "business", "negocio", "nature", 
+               "naturaleza", "urban", "urbano", "lifestyle", "trabajo", "office", "oficina",
+               "food", "comida", "travel", "viaje", "fashion", "moda"],
+    "pixabay": ["abstract", "abstracto", "background", "fondo", "animation", "animacion",
+                "technology", "tecnologia", "digital", "nature", "naturaleza", "concept",
+                "concepto", "graphic", "grafico"],
+}
+
+def _get_semantic_expansions(terms: list[str], max_expansions: int = 3) -> list[str]:
+    """Expand search terms with related semantic keywords."""
+    expansions = []
+    for term in terms[:3]:  # Only expand first 3 terms
+        related = SEMANTIC_EXPANSION.get(term.lower(), [])
+        for rel in related[:max_expansions]:
+            if rel not in expansions and rel not in terms:
+                expansions.append(rel)
+    return expansions
+
+def _get_preferred_provider(keywords: str, context: str) -> str:
+    """Determine which provider is likely to have best results for this query."""
+    text = f"{keywords} {context}".lower()
+    terms = _extract_terms(text)
+    
+    scores = {}
+    for provider, pref_terms in PROVIDER_PREFERENCES.items():
+        score = sum(1 for term in terms if any(pref in term or term in pref for pref in pref_terms))
+        if score > 0:
+            scores[provider] = score
+    
+    if scores:
+        return max(scores.items(), key=lambda x: x[1])[0]
+    return "pexels"  # Default fallback
+
+def _diversify_providers(candidates: list[dict], target_count: int) -> list[dict]:
+    """
+    Ensure provider diversity in results while maintaining quality.
+    Prevents all results from being from the same source (e.g., all Pexels).
+    """
+    if len(candidates) < 2 or target_count < 2:
+        return candidates
+    
+    # Group by provider
+    by_provider = {}
+    for candidate in candidates:
+        provider = candidate.get("provider", "unknown")
+        if provider not in by_provider:
+            by_provider[provider] = []
+        by_provider[provider].append(candidate)
+    
+    # If already diverse (3+ providers), return as-is
+    if len(by_provider) >= 3:
+        return candidates[:target_count]
+    
+    # Interleave providers to ensure variety
+    diversified = []
+    provider_lists = list(by_provider.values())
+    max_iterations = max(len(lst) for lst in provider_lists)
+    
+    for i in range(max_iterations):
+        for provider_list in provider_lists:
+            if i < len(provider_list) and len(diversified) < target_count:
+                diversified.append(provider_list[i])
+    
+    return diversified[:target_count]
+
 
 def search_and_download_video(
     keywords: str,
@@ -697,6 +795,13 @@ def search_video_options(
             filtered_candidates.append(candidate)
 
     ranking_pool = filtered_candidates if filtered_candidates else list(best_by_url.values())
+    
+    # Smart provider boost: prioritize provider that best matches content type
+    preferred_provider = _get_preferred_provider(keywords, context_text)
+    for candidate in ranking_pool:
+        if candidate.get("provider") == preferred_provider:
+            # Boost score by 10% if from preferred provider
+            candidate["score"] = candidate.get("score", 0) * 1.10
 
     ranked = sorted(
         ranking_pool,
@@ -750,6 +855,10 @@ def search_video_options(
             ranked = visually_reranked
 
     limited = ranked[: max(1, limit)]
+    
+    # Provider diversification: ensure variety in results (avoid all videos from same source)
+    if limit >= 4 and len(limited) >= 4:
+        limited = _diversify_providers(limited, limit)
 
     # Ensure NASA/ESA appears in global searches when available (useful for astronomy-focused reels)
     if global_search and limited:
@@ -1187,6 +1296,9 @@ def _build_query_candidates(keywords: str, context_text: str, fallback_keywords:
     keyword_terms = _extract_terms(keywords)
     context_terms = _extract_terms(context_text)
     translated_terms = _translate_terms(keyword_terms + context_terms)
+    
+    # Semantic expansion: add related terms for better discovery
+    expanded_terms = _get_semantic_expansions(keyword_terms + translated_terms, max_expansions=2)
 
     all_terms = []
     for term in keyword_terms + context_terms:
@@ -1195,38 +1307,46 @@ def _build_query_candidates(keywords: str, context_text: str, fallback_keywords:
 
     candidates = []
     
-    # Multi-keyword searches first (best results)
+    # Primary searches: original keywords (most specific)
     if keyword_terms:
+        candidates.append(" ".join(keyword_terms[:2]))  # Best 2 keywords
         candidates.append(" ".join(keyword_terms[:3]))
         candidates.append(" ".join(keyword_terms[:4]))
-        candidates.append(" ".join(keyword_terms[:6]))  # Increased to use all 6 primary keywords
     
-    # Combined keyword + context searches
-    if all_terms:
-        candidates.append(" ".join(all_terms[:3]))
-        candidates.append(" ".join(all_terms[:4]))
-        candidates.append(" ".join(all_terms[:5]))
-    
-    # Translated (English) searches for broader results
+    # Bilingual searches: English translations for broader coverage
     if translated_terms:
+        candidates.append(" ".join(translated_terms[:2]))
         candidates.append(" ".join(translated_terms[:3]))
         candidates.append(" ".join(translated_terms[:4]))
-        candidates.append(" ".join(translated_terms[:6]))
+    
+    # Semantic expansion: add related terms for variety
+    if expanded_terms and keyword_terms:
+        # Mix original + expanded
+        candidates.append(f"{keyword_terms[0]} {expanded_terms[0]}")
+        if len(translated_terms) > 0 and len(expanded_terms) > 1:
+            candidates.append(f"{translated_terms[0]} {expanded_terms[1]}")
+    
+    # Context-enriched searches (if context provided)
+    if context_terms and keyword_terms:
+        candidates.append(f"{keyword_terms[0]} {context_terms[0]}")
+        if all_terms:
+            candidates.append(" ".join(all_terms[:3]))
     
     # Individual keyword searches (fallback for exact matches)
-    for i, term in enumerate(keyword_terms[:4]):
-        if term not in [c for candidate in candidates for c in candidate.split()]:
+    for term in translated_terms[:3]:
+        if term not in " ".join(candidates):
             candidates.append(term)
     
     # Fallback
     if fallback_keywords:
         candidates.append(fallback_keywords)
 
+    # Deduplicate while preserving order
     seen = set()
     unique = []
     for candidate in candidates:
         c = re.sub(r"\s+", " ", candidate).strip()
-        if not c or c in seen:
+        if not c or c in seen or len(c) < 2:
             continue
         seen.add(c)
         unique.append(c)
