@@ -852,12 +852,14 @@ function SegmentCard({
     index,
     videoOptions,
     selectedUrl,
+    loading,
     onThumbClick,
 }: {
     seg: Segment
     index: number
     videoOptions: VideoOption[]
     selectedUrl?: string
+    loading?: boolean
     onThumbClick: () => void
 }) {
     const thumbUrl = selectedUrl
@@ -867,7 +869,7 @@ function SegmentCard({
     return (
         <div className="segment-card">
             <div className="segment-num">{index + 1}</div>
-            {videoOptions.length > 0 && (
+            {(videoOptions.length > 0 || loading) && (
                 <div
                     onClick={onThumbClick}
                     className="segment-thumb"
@@ -878,7 +880,19 @@ function SegmentCard({
                         (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
                     }}
                 >
-                    {thumbUrl ? (
+                    {loading ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', background: 'rgba(255,255,255,0.05)' }}>
+                            <div className="spinner" style={{
+                                width: 24,
+                                height: 24,
+                                border: '2px solid rgba(255,255,255,0.1)',
+                                borderTop: '2px solid var(--accent)',
+                                borderRadius: '50%',
+                                marginBottom: 8
+                            }} />
+                            <div style={{ fontSize: 10, opacity: 0.7 }}>Cargando...</div>
+                        </div>
+                    ) : thumbUrl ? (
                         <img
                             src={thumbUrl}
                             alt="video-thumb"
@@ -1780,6 +1794,7 @@ export default function App() {
                                         index={i}
                                         videoOptions={videoOptionsBySeg[seg.id] || []}
                                         selectedUrl={selectedVideos[seg.id]}
+                                        loading={loadingVideosBySeg[seg.id]}
                                         onThumbClick={() => handleSegmentThumbClick(seg)}
                                     />
                                 ))}
