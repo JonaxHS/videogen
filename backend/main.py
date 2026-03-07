@@ -543,6 +543,44 @@ def generate_script(req: ScriptGenerationRequest):
         "script": script_text,
         "model": OLLAMA_SCRIPT_MODEL,
         "duration_seconds": duration_seconds,
+        "tone": tone,
+    }
+
+
+@app.post("/api/generate-detailed-reel")
+def generate_detailed_reel(req: ScriptGenerationRequest):
+    """
+    Generate a complete reel with title, description, script, visuals, hashtags, etc.
+    Uses advanced prompt engineering to get structured output from Qwen.
+    """
+    topic = (req.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="El tema no puede estar vacío")
+
+    duration_seconds = max(15, min(180, int(req.duration_seconds or 60)))
+    tone = (req.tone or "educativo viral").strip()
+    language = (req.language or "es").strip().lower()
+    reel_number = int(req.reel_number or 1) if hasattr(req, 'reel_number') else 1
+
+    try:
+        reel_data = _generate_detailed_reel_with_ollama(
+            topic=topic,
+            tone=tone,
+            duration_seconds=duration_seconds,
+            language=language,
+            reel_number=reel_number
+        )
+        
+        return {
+            "reel": reel_data,
+            "model": OLLAMA_SCRIPT_MODEL,
+            "duration_seconds": duration_seconds,
+            "tone": tone,
+            "status": "success"
+        }
+    except Exception as e:
+        print(f"[DetailedReel] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al generar reel: {str(e)}")
     }
 
 
@@ -597,6 +635,204 @@ def _generate_script_with_ollama(topic: str, tone: str, duration_seconds: int, l
             "top_p": 0.9,
         },
     }
+
+    response = requests.post(f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat", json=chat_payload, timeout=12)
+    if response.status_code == 404:
+        response = requests.post(f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate", json=generate_payload, timeout=12)
+
+    response.raise_for_status()
+    payload = response.json() or {}
+    message_text = ((payload.get("message") or {}).get("content") or "").strip()
+    if message_text:
+        return message_text
+    return str(payload.get("response", "")).strip()
+
+
+def _generate_detailed_reel_with_ollama(
+    topic: str,
+    tone: str,
+    duration_seconds: int,
+    language: str = "es",
+    reel_number: int = 1
+) -> dict:
+    """
+    Generate a detailed reel with title, description, hashtags, script, visuals, etc.
+    
+    Returns dict with:
+    {
+        "title": "...",
+        "description": "...",
+        "script": "...",
+        "hashtags": "...",
+        "word_count": 0,
+        "estimated_duration": "90-95 segundos",
+        "tone": "revelador, visual",
+        "recommended_voice": "Antoni o Serena",
+        "music_suggestion": "...",
+        "visual_suggestions": [...],
+        "suggested_comment": "...",
+        "key_fact": "..."
+    }
+    """
+    
+    target_words = max(100, int((duration_seconds / 60) * 150))
+    
+    if language.startswith("es"):
+        language_hint = "Escribe en español neutro y evocador."
+    else:
+        language_hint = "Write in the requested language with narrative style."
+    
+    # Prompt avanzado que pide formato complejo
+    detailed_prompt = f"""
+Eres un guionista experto en reels de divulgación científica para Instagram/TikTok.
+
+TAREA: Genera el REEL #{reel_number} completo con todos estos elementos:
+
+**TEMA:** {topic}
+**TONO:** {tone}
+**DURACIÓN:** {duration_seconds} segundos (~{target_words} palabras)
+**IDIOMA:** {language_hint}
+
+FORMATO EXACTO REQUERIDO (usa estos encabezados):
+
+### 🌌 Título:
+[Título atractivo, máximo 10 palabras]
+
+### 📝 Descripción:
+[2-3 párrafos que expliquen el tema en forma cautivadora. Incluir contexto histórico o dato impactante]
+
+### Hashtags:
+[Lista de 5-8 hashtags relevantes]
+
+### 📜 Guion Fluido:
+[Guion con líneas cortas (poético), cada idea en una línea nueva. 
+- Ritmo dinámico
+- Empieza con analogía cotidiana
+- Incluye datos científicos
+- Termina con reflexión profunda
+- Sin tiempo de lectura >90s en voz natural]
+
+### Métricas:
+- Palabras totales: [número]
+- Duración estimada: [X-Y segundos]
+- Tono narrativo: [adjetivos]
+- Voces recomendadas: [opciones españolas]
+- Música sugerida: [descripción corta]
+
+### 🎥 Sugerencias Visuales (tabla):
+| Momento | Escena sugerida | Nota |
+|---------|-----------------|------|
+| [Inicio] | [descripción] | [pista] |
+| [Medio] | [descripción] | [pista] |
+| [Final] | [descripción] | [pista] |
+
+### 💬 Comentario sugerido:
+[Un párrafo que invite a comentar. Incluye un dato de impacto al final]
+
+### 🚀 Dato clave:
+[Un dato científico, fórmula, o información fascinante relacionada]
+
+IMPORTANTE:
+- Usa emojis estratégicos (máximo 3-5)
+- Mantén un equilibrio entre ciencia y narrativa
+- El guion debe ser memorerable y compartible
+- Asegúrate que cada línea sea clara en voz alta
+"""
+    
+    chat_payload = {
+        "model": OLLAMA_SCRIPT_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Eres un creador de contenido viral de divulgación científica. Especializándote en reels que educan y cautivan. Dominas la estructura narrativa, datos científicos precisos, y humor. Tus reels son compartidos por millones en redes sociales.",
+            },
+            {
+                "role": "user",
+                "content": detailed_prompt,
+            },
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.85,
+            "top_p": 0.95,
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+            json=chat_payload,
+            timeout=30  # Longer timeout for complex generation
+        )
+        response.raise_for_status()
+        body = response.json() or {}
+        full_text = ((body.get("message") or {}).get("content") or "").strip()
+        
+        if full_text:
+            # Parse the structured response
+            return _parse_detailed_reel(full_text)
+        else:
+            return {"error": "Empty response from Qwen"}
+            
+    except Exception as e:
+        print(f"[DetailedReel] Qwen generation failed: {e}, using fallback basic script")
+        # Fallback: generate simple script
+        simple_script = _generate_script_with_ollama(topic, tone, duration_seconds, language)
+        return {
+            "title": topic[:60],
+            "script": simple_script,
+            "error": f"Detailed generation failed: {str(e)}"
+        }
+
+
+def _parse_detailed_reel(text: str) -> dict:
+    """
+    Parse structured reel output from Qwen into dict.
+    Extracts sections between ### headers.
+    """
+    result = {}
+    
+    # Extract title
+    if "### 🌌 Título:" in text:
+        title_section = text.split("### 🌌 Título:")[1].split("###")[0].strip()
+        result["title"] = title_section[:100]
+    
+    # Extract description
+    if "### 📝 Descripción:" in text:
+        desc_section = text.split("### 📝 Descripción:")[1].split("###")[0].strip()
+        result["description"] = desc_section[:500]
+    
+    # Extract hashtags
+    if "### Hashtags:" in text:
+        hashtags_section = text.split("### Hashtags:")[1].split("###")[0].strip()
+        result["hashtags"] = hashtags_section
+    
+    # Extract script
+    if "### 📜 Guion Fluido:" in text:
+        script_section = text.split("### 📜 Guion Fluido:")[1].split("###")[0].strip()
+        result["script"] = script_section
+    
+    # Extract metrics
+    if "### Métricas:" in text:
+        metrics_section = text.split("### Métricas:")[1].split("###")[0].strip()
+        result["metrics"] = metrics_section
+    
+    # Extract visuals
+    if "### 🎥 Sugerencias Visuales" in text:
+        visuals_section = text.split("### 🎥 Sugerencias Visuales")[1].split("###")[0].strip()
+        result["visual_suggestions"] = visuals_section
+    
+    # Extract comment
+    if "### 💬 Comentario sugerido:" in text:
+        comment_section = text.split("### 💬 Comentario sugerido:")[1].split("###")[0].strip()
+        result["suggested_comment"] = comment_section
+    
+    # Extract key fact
+    if "### 🚀 Dato clave:" in text:
+        fact_section = text.split("### 🚀 Dato clave:")[1].strip()
+        result["key_fact"] = fact_section[:300]
+    
+    return result
 
     try:
         response = requests.post(
