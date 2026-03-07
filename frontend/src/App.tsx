@@ -215,7 +215,7 @@ function VideoReplacementModal({
     const handleSearchInput = (query: string) => {
         setSearchQuery(query)
         setSearchPage(1)
-        
+
         if (searchTimeoutRef.current) {
             clearTimeout(searchTimeoutRef.current)
         }
@@ -235,8 +235,8 @@ function VideoReplacementModal({
                     context_text: '',
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
-                    global_search: true,
-                    prefer_nasa: true,
+                    global_search: false,
+                    prefer_nasa: false,
                     page: 1,
                     exclude_urls: displayOptions.map(o => o.url),
                     include_providers: selectedProviders,
@@ -264,8 +264,8 @@ function VideoReplacementModal({
                 context_text: '',
                 min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                 limit: 30,
-                global_search: true,
-                prefer_nasa: true,
+                global_search: false,
+                prefer_nasa: false,
                 page: nextPage,
                 exclude_urls: displayOptions.map(o => o.url),
                 include_providers: selectedProviders,
@@ -1658,7 +1658,7 @@ export default function App() {
 
             {/* Setup Wizard overlay if not configured */}
             {config && showSetupWizard && (
-                <SetupWizard 
+                <SetupWizard
                     onComplete={async () => {
                         // Reload config from backend after saving
                         try {

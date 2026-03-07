@@ -634,11 +634,9 @@ def search_video_options(
 
     exclude_urls = exclude_urls or set()
     effective_context = "" if global_search else context_text
-    effective_fallback = (
-        "cinematic broll nature technology city abstract"
-        if global_search and not (fallback_keywords or "").strip()
-        else fallback_keywords
-    )
+    effective_fallback = fallback_keywords
+    if global_search and not effective_fallback:
+        effective_fallback = "cinematic broll nature technology city abstract" if not keywords.strip() else ""
     query_candidates = _build_query_candidates(keywords, effective_context, effective_fallback)
     translated_terms_for_nasa = _translate_terms(_extract_terms(f"{keywords} {context_text}"))
 
@@ -771,7 +769,7 @@ def search_video_options(
                 )
 
     # Only use broad generic queries as a fallback when the main intent produced too few options.
-    if global_search and len(all_candidates) < max(4, limit * 2):
+    if global_search and len(all_candidates) < 8:
         for query in global_fallback_queries:
             for provider_name, provider_key in providers:
                 if provider_name == "pexels":
