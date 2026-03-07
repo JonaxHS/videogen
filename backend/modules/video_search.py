@@ -1183,8 +1183,11 @@ def _search_pixabay_candidates(
         resolution_score = min(25.0, (int(selected.get("width", 0) or 0) * int(selected.get("height", 0) or 0)) / 150000.0)
         total_score = relevance * 12.0 + duration_score + resolution_score
 
-        # Use Pixabay's previewURL for thumbnail (it's a valid image URL)
-        thumbnail = hit.get("previewURL", "")
+        # Use Pixabay's thumbnail embedded inside the selected video resolution object
+        thumbnail = selected.get("thumbnail", "")
+        if not thumbnail:
+            # Fallback to general poster image if any
+            thumbnail = hit.get("userImageURL", "")
         
         pixabay_title = str(hit.get("tags", ""))
         skip_seconds = _detect_intro_seconds(pixabay_title, "")
