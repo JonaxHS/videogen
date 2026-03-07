@@ -988,6 +988,21 @@ def download_video_from_url(video_url: str, provider_hint: str = "manual") -> st
             cached_path.unlink()
             raise RuntimeError(f"Downloaded file too small ({file_size} bytes), likely error page")
 
+        # Validate that the downloaded file is a valid video with frames
+        # This prevents ffmpeg 'frame=  0' errors during composition
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", str(cached_path)],
+                capture_output=True, text=True, timeout=10
+            )
+            if "video" not in probe.stdout.lower():
+                cached_path.unlink()
+                raise RuntimeError("Downloaded file does not contain a valid video stream")
+        except Exception as e:
+            if cached_path.exists():
+                cached_path.unlink()
+            raise RuntimeError(f"Invalid video file or ffprobe failed: {e}")
+
         # Trigger automatic cache cleanup after successful download
         _cleanup_cache_if_needed()
 
