@@ -83,7 +83,7 @@ SUBTITLE_STYLES = {
         "boxborderw": 0,
         "borderw": 4,
         "bordercolor": "black",
-        "max_steps": 16,
+        "max_steps": 4,  # Limit to 4 progressive steps for VPS stability
         "mode": "progressive",
         "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
     },
@@ -257,7 +257,7 @@ def _compose_segment(
         borderw = int(style.get("borderw", 0) or 0)
         bordercolor = str(style.get("bordercolor", "black"))
         mode = str(style.get("mode", "static"))
-        max_steps = int(style.get("max_steps", 16) or 16)
+        max_steps = int(style.get("max_steps", 4) or 4)  # Limit to 4 progressive steps max (VPS stability)
         extra = style["extra"]
 
         # Calculate Y position based on position parameter
@@ -271,7 +271,13 @@ def _compose_segment(
         # Build drawtext filter(s)
         use_box = boxborderw > 0 and str(boxcolor).strip().lower() not in {"", "transparent", "none"}
 
-        if mode == "progressive":
+        # For texts with many words, use simple mode to avoid too many drawtext filters
+        words = [w for w in (text or "").split() if w.strip()]
+        use_simple_mode = len(words) > 12
+        if use_simple_mode:
+            print(f"[Composer] Text has {len(words)} words: using simple mode (static subtitle)")
+
+        if mode == "progressive" and not use_simple_mode:
             drawtext_filter = _build_progressive_drawtext_filter(
                 text=text,
                 safe_text=safe_text,
