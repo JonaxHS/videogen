@@ -319,7 +319,7 @@ def _compose_segment(
         filter_complex = (
             f"[0:v]"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop=min(iw\\\\,{OUTPUT_WIDTH}):min(ih\\\\,{OUTPUT_HEIGHT}):(iw-min(iw\\\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\\\,{OUTPUT_HEIGHT}))/2,"
+            f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
             f"setsar=1,"
             f"fps={FPS}"
             f"[scaled];"
@@ -331,7 +331,7 @@ def _compose_segment(
         filter_complex = (
             f"[0:v]"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop=min(iw\\\\,{OUTPUT_WIDTH}):min(ih\\\\,{OUTPUT_HEIGHT}):(iw-min(iw\\\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\\\,{OUTPUT_HEIGHT}))/2,"
+            f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
             f"setsar=1,"
             f"fps={FPS}"
             f"[out]"
@@ -357,10 +357,17 @@ def _compose_segment(
     # Build video input options: -stream_loop FIRST, then -ss (seek)
     # This ensures loop is applied correctly with intro trimming
     video_input_options = []
+    
+    needs_loop = True
+    if video_dur > 0 and video_dur >= (audio_duration + skip_seconds):
+        needs_loop = False
+        
+    if needs_loop:
+        # -fflags +genpts prevents frame=0 dropping from reset timestamps in loops
+        video_input_options.extend(["-stream_loop", "-1", "-fflags", "+genpts"])
+        
     if skip_seconds > 0.0:
-        video_input_options = ["-stream_loop", "-1", "-ss", str(skip_seconds)]
-    else:
-        video_input_options = ["-stream_loop", "-1"]
+        video_input_options.extend(["-ss", str(skip_seconds)])
 
     if audio_path:
         cmd = [
@@ -412,7 +419,7 @@ def _compose_segment(
                 fallback_filter = (
                     f"[0:v]"
                     f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-                    f"crop=min(iw\\\\,{OUTPUT_WIDTH}):min(ih\\\\,{OUTPUT_HEIGHT}):(iw-min(iw\\\\,{OUTPUT_WIDTH}))/2:(ih-min(ih\\\\,{OUTPUT_HEIGHT}))/2,"
+                    f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
                     f"setsar=1,"
                     f"fps={FPS}"
                     f"[out]"
