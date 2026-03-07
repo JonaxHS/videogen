@@ -1763,8 +1763,21 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
         return ranked_candidates
 
     pool = ranked_candidates[:top_k]
+    
+    # Shuffle the pool to eliminate LLM positional bias (Qwen favoring option 1)
+    # but keep track of the original items.
+    import random
+    shuffled_indices = list(range(len(pool)))
+    # Seed the shuffle predictably to ensure consistent testability, but different per query
+    seed_val = int(hashlib.md5(query_text.encode()).hexdigest()[:8], 16) if query_text else None
+    if seed_val:
+        random.seed(seed_val)
+    random.shuffle(shuffled_indices)
+    
     lines = []
-    for i, candidate in enumerate(pool, start=1):
+    # Display the shuffled list to Qwen
+    for display_idx, original_idx in enumerate(shuffled_indices, start=1):
+        candidate = pool[original_idx]
         provider = str(candidate.get("provider", "manual"))
         duration = candidate.get("duration", "?")
         score = round(float(candidate.get("score", 0.0)), 2)
@@ -1774,7 +1787,7 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
         description = str(candidate.get("description", "")).strip()
         snippet = (f"{title} | {description}").strip(" |")[:240]
         lines.append(
-            f"{i}) provider={provider} duration={duration}s score={score} relevance={relevance} "
+            f"{display_idx}) provider={provider} duration={duration}s score={score} relevance={relevance} "
             f"context={snippet} url={url}"
         )
 
@@ -1790,6 +1803,9 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
 
     try:
         text = _ollama_generate_text(user_prompt)
+        # Reset seed to avoid impacting other random operations globally
+        random.seed()
+        
         if not text:
             return ranked_candidates
 
@@ -1797,12 +1813,13 @@ def _qwen_rerank_candidates(query_text: str, ranked_candidates: list[dict], top_
         if not match:
             return ranked_candidates
 
-        picked = int(match.group(1))
-        if picked < 1 or picked > len(pool):
+        picked_display_idx = int(match.group(1))
+        if picked_display_idx < 1 or picked_display_idx > len(pool):
             return ranked_candidates
 
-        chosen = pool[picked - 1]
-        reordered_top = [chosen] + [c for idx, c in enumerate(pool) if idx != (picked - 1)]
+        original_idx = shuffled_indices[picked_display_idx - 1]
+        chosen = pool[original_idx]
+        reordered_top = [chosen] + [c for idx, c in enumerate(pool) if idx != original_idx]
         return reordered_top + ranked_candidates[top_k:]
     except Exception as e:
         print(f"[VideoSearch] Qwen rerank skipped: {e}")
@@ -1975,7 +1992,7 @@ def _ollama_generate_text(user_prompt: str) -> str:
         ],
         "stream": False,
         "options": {
-            "temperature": 0.2,
+            "temperature": 0.7,
             "top_p": 0.9,
         },
     }
@@ -1988,7 +2005,7 @@ def _ollama_generate_text(user_prompt: str) -> str:
         ),
         "stream": False,
         "options": {
-            "temperature": 0.2,
+            "temperature": 0.7,
             "top_p": 0.9,
         },
     }
