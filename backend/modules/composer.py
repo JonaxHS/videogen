@@ -93,20 +93,20 @@ SUBTITLE_STYLES = {
         "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
     },
     "reel-impact": {
-        "fontsize": 74,
+        "fontsize": 66,
         "fontcolor": "white",
         "boxcolor": "none",
         "position": "bottom",
-        "y_offset": 220,
+        "y_offset": 280,
         "line_spacing": 20,
         "boxborderw": 0,
-        "borderw": 10,
+        "borderw": 8,
         "bordercolor": "black",
         "mode": "progressive",
         "max_steps": 30,  # Allow more steps for word-by-word display
         "force_progressive": True,
         "font": "DejaVu Sans Bold",
-        "wrap_chars": 20,
+        "wrap_chars": 24,
         "max_lines": 3,
         "extra": ":shadowx=4:shadowy=4:shadowcolor=black@0.6"
     },
