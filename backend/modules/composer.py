@@ -232,7 +232,8 @@ def compose_video(
             pass
     try:
         os.remove(str(concat_list_path))
-        os.rmdir(str(temp_dir))
+        import shutil
+        shutil.rmtree(str(temp_dir))
     except Exception:
         pass
 
@@ -327,9 +328,15 @@ def _compose_segment(
                 max_lines=max_lines,
             )
         else:
+            clean_text = _escape_ffmpeg_text(text, max_chars=wrap_chars, max_lines=max_lines, for_textfile=True)
+            import uuid
+            txt_path = os.path.join(os.path.dirname(output_path) or ".", f"sub_{uuid.uuid4().hex[:8]}_static.txt")
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(clean_text)
+                
             drawtext_parts = [
                 "drawtext=",
-                f"text='{safe_text}':",
+                f"textfile='{txt_path}':",
                 f"fontcolor={fontcolor}:",
                 f"fontsize={fontsize}:",
                 f"box={1 if use_box else 0}:",
@@ -597,12 +604,21 @@ def _build_progressive_drawtext_filter(
     max_steps: int,
     wrap_chars: int,
     max_lines: int,
+    output_path: str = "",
 ) -> str:
+    import uuid
+    import os
+    temp_dir_local = os.path.dirname(output_path) or "."
     words = [w for w in (text or "").split() if w.strip()]
     if len(words) <= 1 or audio_duration <= 0.2:
+        txt_path = os.path.join(temp_dir_local, f"sub_{uuid.uuid4().hex[:8]}_short.txt")
+        clean_text = _escape_ffmpeg_text(text, max_chars=9999, max_lines=0, for_textfile=True)
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(clean_text)
+            
         parts = [
             "drawtext=",
-            f"text='{safe_text}':",
+            f"textfile='{txt_path}':",
             f"fontcolor={fontcolor}:",
             f"fontsize={fontsize}:",
             "box=0:",
@@ -657,10 +673,14 @@ def _build_progressive_drawtext_filter(
         # Manually wrap text to max_lines by inserting newlines
         wrapped_text = _manual_wrap_text(display_text, wrap_chars, max_lines)
         
-        # Clean and escape for FFmpeg
-        escaped = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0)
+        # Clean and write to textfile for FFmpeg
+        clean_text = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0, for_textfile=True)
+        txt_path = os.path.join(temp_dir_local, f"sub_{uuid.uuid4().hex[:8]}_{word_idx}.txt")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(clean_text)
+            
         phrases.append({
-            'text': escaped,
+            'textfile': txt_path,
             'start': (word_idx - 1) * time_per_word,
             'end': word_idx * time_per_word if word_idx < len(words) else audio_duration + 0.02
         })
@@ -684,7 +704,7 @@ def _build_progressive_drawtext_filter(
     for phrase_data in phrases:
         parts = [
             "drawtext=",
-            f"text='{phrase_data['text']}':",
+            f"textfile='{phrase_data['textfile']}':",
             f"fontcolor={fontcolor}:",
             f"fontsize={fontsize}:",
             "box=0:",
@@ -738,7 +758,7 @@ def _manual_wrap_text(text: str, wrap_chars: int, max_lines: int) -> str:
     return '\n'.join(lines)
 
 
-def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> str:
+def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3, for_textfile: bool = False) -> str:
     """Escape text for FFmpeg drawtext filter."""
     text = unicodedata.normalize("NFKC", text or "")
     
@@ -773,6 +793,9 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     
     # Order matters: handle newlines FIRST before other escaping
     # For FFmpeg drawtext in shell, newline needs special handling
+    if for_textfile:
+        return text
+    
     text = text.replace('\n', '<<<NL>>>')  # Temporary placeholder
     
     # Now escape other special chars
