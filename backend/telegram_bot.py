@@ -232,6 +232,7 @@ def backend_generate(script: str) -> str:
             "show_subtitles": prefs["show_subtitles"],
             "subtitle_style": prefs["subtitle_style"],
             "selected_videos": {},
+            "source": "telegram",
         },
         timeout=60,
     )

@@ -30,11 +30,16 @@ interface VoicesResponse {
 }
 
 interface Job {
-    status: 'queued' | 'running' | 'done' | 'error'
+    job_id?: string
+    status: 'queued' | 'running' | 'done' | 'error' | 'unknown'
     progress: number
     message: string
     error?: string
     output_path?: string
+    created_at?: number
+    source?: string
+    title?: string
+    is_done?: boolean
 }
 
 interface Config {
@@ -1445,6 +1450,100 @@ function ConfigPanel({
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
+function JobQueuePanel({ jobs, onClose }: { jobs: Job[], onClose?: () => void }) {
+    if (!jobs || jobs.length === 0) return null
+
+    return (
+        <div style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            width: 340,
+            maxHeight: '60vh',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            zIndex: 9999,
+            pointerEvents: 'none' // Allow clicking through the container itself
+        }}>
+            {jobs.map(job => (
+                <div key={job.job_id || Math.random().toString()} style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    padding: 16,
+                    pointerEvents: 'auto',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                    backdropFilter: 'blur(10px)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                    animation: 'slideUp 0.3s ease-out',
+                    opacity: job.is_done ? 0.9 : 1
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {job.title || 'Video en proceso'}
+                        </div>
+                        <div style={{
+                            fontSize: 11,
+                            padding: '2px 6px',
+                            background: job.source === 'telegram' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.1)',
+                            color: job.source === 'telegram' ? '#38bdf8' : 'var(--text-2)',
+                            borderRadius: '999px',
+                            marginLeft: 8,
+                        }}>
+                            {job.source === 'telegram' ? '✈️ Bot' : '🌐 Web'}
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                        <span style={{ color: job.status === 'error' ? 'var(--error)' : 'var(--text-2)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 8 }}>
+                            {job.message || 'Procesando...'}
+                        </span>
+                        {job.status === 'running' && <span style={{ fontWeight: 700, color: 'var(--accent)' }}>{job.progress}%</span>}
+                        {job.status === 'queued' && <span style={{ color: 'var(--text-2)' }}>En cola...</span>}
+                        {job.status === 'done' && <span style={{ color: 'var(--success)' }}>✅ Listo</span>}
+                        {job.status === 'error' && <span style={{ color: 'var(--error)' }}>❌ Error</span>}
+                    </div>
+
+                    {(job.status === 'running' || job.status === 'queued') && (
+                        <div style={{ background: 'var(--bg)', height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 4 }}>
+                            <div style={{
+                                width: `${Math.max(2, job.progress)}%`,
+                                height: '100%',
+                                background: job.status === 'queued' ? 'var(--text-2)' : 'linear-gradient(90deg, var(--accent), var(--accent-2))',
+                                transition: 'width 0.3s ease'
+                            }} />
+                        </div>
+                    )}
+
+                    {job.status === 'done' && job.job_id && (
+                        <a
+                            href={`/api/download/${job.job_id}`}
+                            download
+                            style={{
+                                display: 'block',
+                                textAlign: 'center',
+                                padding: '8px',
+                                background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                                color: 'white',
+                                textDecoration: 'none',
+                                borderRadius: 6,
+                                fontWeight: 600,
+                                fontSize: 13,
+                                marginTop: 4,
+                            }}
+                        >
+                            ⬇️ Descargar MP4
+                        </a>
+                    )}
+                </div>
+            ))}
+        </div>
+    )
+}
+
 export default function App() {
     const [config, setConfig] = useState<Config | null>(null)
     const [showSetupWizard, setShowSetupWizard] = useState(false)
@@ -1470,7 +1569,30 @@ export default function App() {
     const [loading, setLoading] = useState(false)
     const [playingPreview, setPlayingPreview] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [jobsQueue, setJobsQueue] = useState<Job[]>([])
     const sseRef = useRef<EventSource | null>(null)
+
+    // Poll global jobs queue every 2.5 seconds
+    useEffect(() => {
+        let mounted = true
+        const fetchJobs = async () => {
+            try {
+                const res = await apiGet<{ jobs: Job[] }>('/jobs')
+                if (mounted) {
+                    setJobsQueue(res.jobs || [])
+                }
+            } catch {
+                // Ignore transient network errors during polling
+            }
+        }
+
+        fetchJobs() // Initial fetch
+        const interval = setInterval(fetchJobs, 2500)
+        return () => {
+            mounted = false
+            clearInterval(interval)
+        }
+    }, [])
 
     // Check config on mount
     useEffect(() => {
@@ -1730,7 +1852,7 @@ export default function App() {
             console.log('[DEBUG] Segments IDs:', segments.map(s => s.id))
             console.log('[DEBUG] Selected videos:', selectedVideos)
             console.log('[DEBUG] Selected videos payload (sent to backend):', selectedVideosPayload)
-            
+
             const res = await apiPost<{ job_id: string; segments: Segment[] }>('/generate', {
                 script,
                 voice: selectedVoice,
@@ -1739,8 +1861,13 @@ export default function App() {
                 subtitle_style: subtitleStyle,
                 selected_videos: selectedVideosPayload,
             })
-            setSegments(res.segments)
-            setJobId(res.job_id)
+            // Clear the form to allow running multiple jobs
+            setScript('')
+            setScriptTopic('')
+            setSegments([])
+            setSelectedVideos({})
+            setJobId(null)
+            setLoading(false)
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : 'Error desconocido')
             setLoading(false)
@@ -1751,7 +1878,7 @@ export default function App() {
         if (!script.trim()) return
         setError(null)
         setJob(null)
-        setJobId(null)  // Limpiar jobId previo para evitar confusión entre trabajos
+        setJobId(null)
         setLoading(true)
 
         try {
@@ -1763,8 +1890,13 @@ export default function App() {
                     Object.entries(selectedVideos).map(([k, v]) => [String(k), v])
                 ),
             })
-            setSegments(res.segments)
-            setJobId(res.job_id)
+            // Clear the form to allow running multiple jobs
+            setScript('')
+            setScriptTopic('')
+            setSegments([])
+            setSelectedVideos({})
+            setJobId(null)
+            setLoading(false)
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : 'Error desconocido')
             setLoading(false)
@@ -1855,6 +1987,9 @@ export default function App() {
 
     return (
         <div className="app">
+            {/* Global Job Queue Panel */}
+            <JobQueuePanel jobs={jobsQueue} />
+
             {/* Config Panel overlay */}
             {showConfigPanel && (
                 <ConfigPanel

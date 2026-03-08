@@ -235,6 +235,7 @@ class GenerateRequest(BaseModel):
     show_subtitles: bool = True
     subtitle_style: str = "classic"
     selected_videos: Dict[str, str] = Field(default_factory=dict)
+    source: str = "web"
 
 
 class PreviewRequest(BaseModel):
@@ -242,6 +243,7 @@ class PreviewRequest(BaseModel):
     show_subtitles: bool = True
     subtitle_style: str = "classic"
     selected_videos: Dict[str, str] = Field(default_factory=dict)
+    source: str = "web"
 
 
 class GenerateResponse(BaseModel):
@@ -755,6 +757,9 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         "error": None,
         "output_path": None,
         "retention_seconds": JOB_RETENTION_SECONDS,
+        "created_at": time.time(),
+        "source": req.source,
+        "title": req.script[:30].strip() + "..." if len(req.script) > 30 else req.script,
     }
 
     # Run generation in background
@@ -798,6 +803,9 @@ def generate_preview(req: PreviewRequest, background_tasks: BackgroundTasks):
         "output_path": None,
         "preview_only": True,
         "retention_seconds": JOB_RETENTION_SECONDS,
+        "created_at": time.time(),
+        "source": req.source,
+        "title": req.script[:30].strip() + "..." if len(req.script) > 30 else req.script,
     }
 
     background_tasks.add_task(
@@ -1290,6 +1298,37 @@ def download(job_id: str):
         media_type="video/mp4",
         filename=f"reel_{job_id[:8]}.mp4",
     )
+
+
+@app.get("/api/jobs")
+def get_jobs():
+    """Return all active or recently completed jobs, sorted by recency."""
+    job_list = []
+    
+    for jid, job in list(jobs.items()):
+        title = job.get("title")
+        if not title:
+            if job.get("segments") and len(job["segments"]) > 0:
+                text = job["segments"][0].get('text', '')
+                title = text[:30] + "..." if len(text) > 30 else text
+            else:
+                title = "Video Generado"
+        
+        job_list.append({
+            "job_id": jid,
+            "status": job.get("status", "unknown"),
+            "progress": job.get("progress", 0),
+            "message": job.get("message", ""),
+            "error": job.get("error"),
+            "created_at": job.get("created_at", 0),
+            "source": job.get("source", "unknown"),
+            "title": title,
+            "preview_only": bool(job.get("preview_only", False)),
+            "is_done": job.get("status") in ("done", "error"),
+        })
+        
+    job_list.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"jobs": job_list}
 
 
 # ─────────────────────────────────────────────
