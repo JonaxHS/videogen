@@ -23,6 +23,9 @@ MAX_CACHE_SIZE_MB=5000
 
 # Max file age in days before deletion (default: 7)
 MAX_FILE_AGE_DAYS=7
+
+# Limit FFmpeg encoder threads to reduce RAM spikes on small VPS (default: 2)
+FFMPEG_THREADS=2
 ```
 
 **How it works:**

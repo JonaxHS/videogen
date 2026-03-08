@@ -1535,15 +1535,20 @@ export default function App() {
         setLoading(true)
 
         try {
+            const selectedVideosPayload = Object.fromEntries(
+                Object.entries(selectedVideos).map(([k, v]) => [String(k), v])
+            )
+            console.log('[DEBUG] Segments IDs:', segments.map(s => s.id))
+            console.log('[DEBUG] Selected videos:', selectedVideos)
+            console.log('[DEBUG] Selected videos payload (sent to backend):', selectedVideosPayload)
+            
             const res = await apiPost<{ job_id: string; segments: Segment[] }>('/generate', {
                 script,
                 voice: selectedVoice,
                 rate,
                 show_subtitles: showSubtitles,
                 subtitle_style: subtitleStyle,
-                selected_videos: Object.fromEntries(
-                    Object.entries(selectedVideos).map(([k, v]) => [String(k), v])
-                ),
+                selected_videos: selectedVideosPayload,
             })
             setSegments(res.segments)
             setJobId(res.job_id)

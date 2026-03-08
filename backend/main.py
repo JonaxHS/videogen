@@ -1037,6 +1037,11 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
             # 3. Download stock video
             job["message"] = f"Segmento {i + 1}/{total}: buscando video..."
             manual_url = selected_videos.get(str(seg.get("id", i)), "").strip()
+            
+            print(f"[DEBUG Segment {i+1}] seg.id = {seg.get('id', 'MISSING')}, using key: {str(seg.get('id', i))}")
+            print(f"[DEBUG Segment {i+1}] selected_videos dict: {selected_videos}")
+            print(f"[DEBUG Segment {i+1}] manual_url found: {manual_url if manual_url else 'NONE - will auto-search'}")
+            
             video_skip_seconds = 0.0
             if manual_url:
                 manual_provider = infer_provider_from_url(manual_url)

@@ -17,6 +17,7 @@ FPS = 30
 OUTPUT_FORMAT = "mp4"
 NASA_INTRO_SKIP_SECONDS = float(os.getenv("NASA_INTRO_SKIP_SECONDS", "2.0"))
 ESA_INTRO_SKIP_SECONDS = float(os.getenv("ESA_INTRO_SKIP_SECONDS", "2.0"))
+FFMPEG_THREADS = max(1, int(os.getenv("FFMPEG_THREADS", "2")))
 
 # Subtitle styles: {name: {fontsize, color, bgcolor, position, extra_params}}
 SUBTITLE_STYLES = {
@@ -449,6 +450,7 @@ def _compose_segment(
             "-map", "[out]",
             "-map", "1:a",
             "-c:v", "libx264",
+            "-threads", str(FFMPEG_THREADS),
             "-preset", "fast",
             "-crf", "23",
             "-c:a", "aac",
@@ -465,6 +467,7 @@ def _compose_segment(
             "-filter_complex", filter_complex,
             "-map", "[out]",
             "-c:v", "libx264",
+            "-threads", str(FFMPEG_THREADS),
             "-preset", "fast",
             "-crf", "23",
             "-an",
@@ -475,14 +478,25 @@ def _compose_segment(
     try:
         print(f"[Composer] Composing segment: {output_path}", flush=True)
         print(f"[Composer] Audio duration: {audio_duration}s, Skip: {skip_seconds}s, Subtitles: {show_subtitles}", flush=True)
-        print(f"[Composer] FFmpeg preset: fast, threads: auto", flush=True)
+        print(f"[Composer] FFmpeg preset: fast, threads: {FFMPEG_THREADS}", flush=True)
         if show_subtitles and "drawtext" in filter_complex:
             print(f"[Composer] Filter chain: video scale/crop/fps + drawtext subtitles", flush=True)
         
         print(f"[Composer] CMD: {' '.join(cmd)}", flush=True)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
         if result.returncode != 0:
-            error_msg = result.stderr[-1500:] if result.stderr else str(result.stderr)
+            stderr_tail = (result.stderr or "")[-1500:]
+            stdout_tail = (result.stdout or "")[-600:]
+            if result.returncode < 0:
+                signal_num = abs(result.returncode)
+                exit_info = f"terminated by signal {signal_num} (likely OOM/KILL if signal=9)"
+            else:
+                exit_info = f"exit code {result.returncode}"
+            error_msg = (
+                f"FFmpeg failed with {exit_info}.\n"
+                f"stderr (tail):\n{stderr_tail}\n"
+                f"stdout (tail):\n{stdout_tail}"
+            )
             print(f"[Composer] FFmpeg error: {error_msg}", flush=True)
             
             # Fallback: retry without subtitles if drawtext filter is in use
