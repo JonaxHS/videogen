@@ -539,6 +539,13 @@ def search_and_download_video_info(
     else:
         search_seed = hashlib.md5(f"{keywords}:{segment_index}:{context_text[:50]}".encode()).hexdigest()[:8]
     
+    # Enable all providers for auto search
+    all_providers = {"pexels", "pixabay", "nasa", "esa"}
+    
+    print(f"[AutoSearch Seg {segment_index}] Query: {keywords[:30]}...")
+    print(f"[AutoSearch Seg {segment_index}] API Keys - Pexels: {'✓' if pexels_api_key else '✗'}, Pixabay: {'✓' if pixabay_api_key else '✗'}")
+    print(f"[AutoSearch Seg {segment_index}] Providers enabled: {all_providers}")
+    
     options = search_video_options(
         keywords=keywords,
         pexels_api_key=pexels_api_key,
@@ -549,7 +556,15 @@ def search_and_download_video_info(
         limit=search_limit,
         exclude_urls=exclude_urls,
         search_seed=search_seed,
+        include_providers=all_providers,  # Explicitly include all providers
     )
+    
+    print(f"[AutoSearch Seg {segment_index}] Found {len(options)} options")
+    provider_counts = {}
+    for opt in options:
+        p = opt.get("provider", "unknown")
+        provider_counts[p] = provider_counts.get(p, 0) + 1
+    print(f"[AutoSearch Seg {segment_index}] Provider distribution: {provider_counts}")
 
     if not options:
         raise RuntimeError(f"No video found for keywords: '{keywords}'")
@@ -569,6 +584,9 @@ def search_and_download_video_info(
     # Fallback: if all are from recent providers, use best one
     if not selected:
         selected = options[0]
+    
+    print(f"[AutoSearch Seg {segment_index}] Recent providers: {recent_providers}")
+    print(f"[AutoSearch Seg {segment_index}] Selected: {selected.get('provider')} - {selected.get('url', '')[:80]}")
     
     local_path = download_video_from_url(selected["url"], provider_hint=selected.get("provider", "manual"))
     return {
@@ -948,8 +966,15 @@ def search_video_options(
             search_seed=search_seed,
         )
         if fallback_nasa:
-            return fallback_nasa[: max(1, limit)]
+            result = fallback_nasa[: max(1, limit)]
+            print(f"[search_video_options] Fallback NASA result: {len(result)} videos")
+            return result
 
+    final_providers = {}
+    for v in limited:
+        p = v.get("provider", "unknown")
+        final_providers[p] = final_providers.get(p, 0) + 1
+    print(f"[search_video_options] Final result: {len(limited)} videos - providers: {final_providers}")
     return limited
 
 
