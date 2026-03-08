@@ -64,6 +64,117 @@ TEMP_DIR = Path("/app/cache/temp")
 for d in [OUTPUT_DIR, CACHE_DIR, TEMP_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+
+def _cleanup_temp_workspace(active_job_id: Optional[str] = None) -> Dict[str, int]:
+    """Cleanup stale temp files/folders under /app/cache/temp.
+
+    Why this exists:
+    - If the process is killed by OOM (signal 9), `finally` blocks may not run.
+    - Stale per-job folders can accumulate quickly and consume tens of GB.
+    """
+    temp_max_age_hours = int(os.getenv("TEMP_JOB_MAX_AGE_HOURS", "6"))
+    temp_max_size_gb = float(os.getenv("TEMP_DIR_MAX_SIZE_GB", "10"))
+
+    removed_dirs = 0
+    removed_files = 0
+    reclaimed_bytes = 0
+
+    if not TEMP_DIR.exists():
+        return {
+            "removed_dirs": removed_dirs,
+            "removed_files": removed_files,
+            "reclaimed_mb": 0,
+        }
+
+    import time as _time
+    cutoff_ts = _time.time() - (max(1, temp_max_age_hours) * 3600)
+
+    # Pass 1: delete stale entries (except active job dir)
+    for child in TEMP_DIR.iterdir():
+        if active_job_id and child.name == active_job_id:
+            continue
+        try:
+            stat = child.stat()
+            if stat.st_mtime >= cutoff_ts:
+                continue
+            entry_size = 0
+            if child.is_dir():
+                for p in child.rglob("*"):
+                    try:
+                        if p.is_file():
+                            entry_size += p.stat().st_size
+                    except Exception:
+                        continue
+                shutil.rmtree(child, ignore_errors=True)
+                removed_dirs += 1
+            else:
+                entry_size = stat.st_size
+                child.unlink(missing_ok=True)
+                removed_files += 1
+            reclaimed_bytes += entry_size
+        except Exception:
+            continue
+
+    # Pass 2: if still too large, remove oldest entries first (except active)
+    max_bytes = int(max(1.0, temp_max_size_gb) * 1024 * 1024 * 1024)
+    current_bytes = 0
+    entries = []
+    for child in TEMP_DIR.iterdir():
+        if active_job_id and child.name == active_job_id:
+            continue
+        try:
+            if child.is_dir():
+                size = 0
+                for p in child.rglob("*"):
+                    try:
+                        if p.is_file():
+                            size += p.stat().st_size
+                    except Exception:
+                        continue
+            else:
+                size = child.stat().st_size
+            current_bytes += size
+            entries.append((child, size, child.stat().st_mtime))
+        except Exception:
+            continue
+
+    if current_bytes > max_bytes:
+        entries.sort(key=lambda item: item[2])
+        for child, size, _ in entries:
+            if current_bytes <= max_bytes:
+                break
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+                    removed_dirs += 1
+                else:
+                    child.unlink(missing_ok=True)
+                    removed_files += 1
+                reclaimed_bytes += size
+                current_bytes -= size
+            except Exception:
+                continue
+
+    reclaimed_mb = int(reclaimed_bytes / (1024 * 1024))
+    if removed_dirs or removed_files:
+        print(
+            f"[TempCleanup] removed_dirs={removed_dirs}, removed_files={removed_files}, reclaimed={reclaimed_mb}MB",
+            flush=True,
+        )
+
+    return {
+        "removed_dirs": removed_dirs,
+        "removed_files": removed_files,
+        "reclaimed_mb": reclaimed_mb,
+    }
+
+
+# Startup sweep: remove stale temp workspace left by previous crashed runs.
+try:
+    _cleanup_temp_workspace(active_job_id=None)
+except Exception as startup_cleanup_err:
+    print(f"[TempCleanup] Startup sweep failed: {startup_cleanup_err}", flush=True)
+
 app = FastAPI(title="VideoGen API", version="1.0.0")
 
 app.add_middleware(
@@ -974,6 +1085,12 @@ def download(job_id: str):
 
 def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, subtitle_style: str = "classic", selected_videos: Optional[Dict[str, str]] = None, preview_only: bool = False):
     """Background task: TTS + video search + composition."""
+    # Pre-flight sweep to keep /app/cache/temp bounded even after crash/OOM leftovers.
+    try:
+        _cleanup_temp_workspace(active_job_id=job_id)
+    except Exception as preflight_cleanup_err:
+        print(f"[TempCleanup] Pre-flight sweep failed: {preflight_cleanup_err}", flush=True)
+
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -1141,19 +1258,8 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         try:
             if job_dir.exists():
                 shutil.rmtree(job_dir, ignore_errors=True)
-                
-            # Auto-cleanup: also sweep any loose files/dirs older than 6 hours in TEMP_DIR.
-            import time as _time
-            cutoff_ts = _time.time() - (6 * 3600)
-            if TEMP_DIR.exists():
-                for sibling in TEMP_DIR.iterdir():
-                    try:
-                        if sibling.stat().st_mtime < cutoff_ts:
-                            if sibling.is_dir():
-                                shutil.rmtree(sibling, ignore_errors=True)
-                            else:
-                                sibling.unlink()
-                    except Exception:
-                        continue
+
+            # Keep temp bounded after each generation as well.
+            _cleanup_temp_workspace(active_job_id=None)
         except Exception as cleanup_err:
             print(f"[Cleanup] Could not remove temp dir {job_dir}: {cleanup_err}")
