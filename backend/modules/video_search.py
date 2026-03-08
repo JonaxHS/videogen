@@ -1264,13 +1264,29 @@ def search_video_options_intelligent(
     ranked = sorted(unique_candidates, key=lambda c: c.get("score", 0), reverse=True)
     
     # Apply provider-based boost for preferred providers
+    scientific_domains = []
+    if script_analysis and isinstance(script_analysis, dict):
+        scientific_domains = script_analysis.get("detected_domains") or []
+
     reranked = []
     for candidate in ranked:
         provider = candidate.get("provider", "")
+        boosted_score = float(candidate.get("score", 0))
+
         # Boost score slightly if from preferred provider
         if provider in preferred_providers[:2]:  # Top 2 preferred
             candidate = dict(candidate)
-            candidate["score"] = candidate.get("score", 0) * 1.05
+            boosted_score *= 1.08
+
+        # For scientific scripts, strongly favor authoritative providers.
+        if scientific_domains:
+            if provider in {"nasa", "esa"}:
+                boosted_score *= 1.35
+            elif provider in {"pexels", "pixabay"}:
+                boosted_score *= 0.90
+
+        candidate = dict(candidate)
+        candidate["score"] = boosted_score
         reranked.append(candidate)
     
     ranked = sorted(reranked, key=lambda c: c.get("score", 0), reverse=True)
@@ -1287,19 +1303,17 @@ def search_video_options_intelligent(
                     limited.append(candidate)
                     break
 
-    # For scientific scripts, guarantee a minimum NASA/ESA presence so results reflect astronomy context.
-    scientific_domains = []
-    if script_analysis and isinstance(script_analysis, dict):
-        scientific_domains = script_analysis.get("detected_domains") or []
+    # For scientific scripts, guarantee a proportional NASA/ESA presence.
     if scientific_domains and limited:
         space_providers = {"nasa", "esa"}
-        min_space_results = 2 if limit >= 4 else 1
+        min_space_results = 1 if limit <= 2 else max(2, int(round(limit * 0.35)))
 
         current_space = sum(1 for item in limited if item.get("provider") in space_providers)
         if current_space < min_space_results:
+            limited_urls = {x.get("url") for x in limited}
             space_candidates = [
                 item for item in ranked
-                if item.get("provider") in space_providers and item.get("url") not in {x.get("url") for x in limited}
+                if item.get("provider") in space_providers and item.get("url") not in limited_urls
             ]
 
             for space_item in space_candidates:
@@ -1312,10 +1326,54 @@ def search_video_options_intelligent(
                 )
                 if replace_idx is None:
                     break
+                outgoing_url = limited[replace_idx].get("url")
                 limited[replace_idx] = space_item
+                if outgoing_url in limited_urls:
+                    limited_urls.remove(outgoing_url)
+                limited_urls.add(space_item.get("url"))
                 current_space += 1
                 if current_space >= min_space_results:
                     break
+
+            # If both NASA and ESA exist in ranked candidates, try to include both.
+            providers_in_limited = {item.get("provider") for item in limited}
+            for required_provider in ("nasa", "esa"):
+                if required_provider in providers_in_limited:
+                    continue
+                replacement = next(
+                    (
+                        item for item in ranked
+                        if item.get("provider") == required_provider and item.get("url") not in limited_urls
+                    ),
+                    None,
+                )
+                if not replacement:
+                    continue
+
+                replace_idx = next(
+                    (
+                        idx for idx in range(len(limited) - 1, -1, -1)
+                        if limited[idx].get("provider") not in space_providers
+                    ),
+                    None,
+                )
+                if replace_idx is None:
+                    replace_idx = next(
+                        (
+                            idx for idx in range(len(limited) - 1, -1, -1)
+                            if limited[idx].get("provider") != required_provider
+                        ),
+                        None,
+                    )
+                if replace_idx is None:
+                    continue
+
+                outgoing_url = limited[replace_idx].get("url")
+                limited[replace_idx] = replacement
+                if outgoing_url in limited_urls:
+                    limited_urls.remove(outgoing_url)
+                limited_urls.add(replacement.get("url"))
+                providers_in_limited = {item.get("provider") for item in limited}
     
     limited = limited[:limit]
     
