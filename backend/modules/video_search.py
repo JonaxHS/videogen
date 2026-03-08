@@ -646,6 +646,11 @@ def search_video_options(
         providers.append(("nasa", ""))
     if "esa" in allowed_providers:
         providers.append(("esa", ""))
+    
+    print(f"[search_video_options] Query: {keywords[:40]}...")
+    print(f"[search_video_options] Requested providers: {allowed_providers}")
+    print(f"[search_video_options] API available - Pexels: {'✓ (will search)' if pexels_api_key else f'✗ (no key)'}, Pixabay: {'✓ (will search)' if pixabay_api_key else f'✗ (no key)'}")
+    print(f"[search_video_options] Active providers: {[p[0] for p in providers]}")
 
     use_nasa = "nasa" in allowed_providers
     use_esa = "esa" in allowed_providers
@@ -738,25 +743,27 @@ def search_video_options(
             if provider_name == "esa":
                 continue
             if provider_name == "pexels":
-                all_candidates.extend(
-                    _search_pexels_candidates(
-                        query,
-                        provider_key,
-                        min_duration,
-                        per_page=pexels_per_page,
-                        page=page,
-                    )
+                print(f"[search_video_options] Searching Pexels for: {query[:40]}...")
+                pexels_results = _search_pexels_candidates(
+                    query,
+                    provider_key,
+                    min_duration,
+                    per_page=pexels_per_page,
+                    page=page,
                 )
+                print(f"[search_video_options] Pexels returned {len(pexels_results)} results")
+                all_candidates.extend(pexels_results)
             elif provider_name == "pixabay":
-                all_candidates.extend(
-                    _search_pixabay_candidates(
-                        query,
-                        provider_key,
-                        min_duration,
-                        per_page=pixabay_per_page,
-                        page=page,
-                    )
+                print(f"[search_video_options] Searching Pixabay for: {query[:40]}...")
+                pixabay_results = _search_pixabay_candidates(
+                    query,
+                    provider_key,
+                    min_duration,
+                    per_page=pixabay_per_page,
+                    page=page,
                 )
+                print(f"[search_video_options] Pixabay returned {len(pixabay_results)} results")
+                all_candidates.extend(pixabay_results)
 
         if quick_mode and len(all_candidates) >= max(6, limit * 3):
             break
