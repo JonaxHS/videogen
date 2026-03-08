@@ -392,10 +392,11 @@ def _compose_segment(
             "-t", str(target_len),
             preloop_path
         ]
-        print(f"[Composer] Pre-looping short video to {target_len}s via concat ({repeat_count}x)...")
+        print(f"[Composer] Pre-looping short video to {target_len}s via concat ({repeat_count}x)...", flush=True)
         res_preloop = subprocess.run(preloop_cmd, capture_output=True, text=True)
         if res_preloop.returncode != 0:
-            print(f"[Composer] WARNING: Preloop failed. FFmpeg output:\n{res_preloop.stderr[-1000:]}")
+            print(f"[Composer] WARNING: Preloop failed. FFmpeg command: {' '.join(preloop_cmd)}", flush=True)
+            print(f"[Composer] WARNING: Preloop failed. FFmpeg output:\n{res_preloop.stderr[-1000:]}", flush=True)
             # Fallback to original path if preloop fails (will likely 0-frame but avoids crash)
         else:
             video_path = preloop_path  # Use the pre-looped file for the main composition
@@ -471,19 +472,21 @@ def _compose_segment(
         ]
 
     try:
-        print(f"[Composer] Composing segment: {output_path}")
-        print(f"[Composer] Audio duration: {audio_duration}s, Skip: {skip_seconds}s, Subtitles: {show_subtitles}")
-        print(f"[Composer] FFmpeg preset: fast, threads: auto")
+        print(f"[Composer] Composing segment: {output_path}", flush=True)
+        print(f"[Composer] Audio duration: {audio_duration}s, Skip: {skip_seconds}s, Subtitles: {show_subtitles}", flush=True)
+        print(f"[Composer] FFmpeg preset: fast, threads: auto", flush=True)
         if show_subtitles and "drawtext" in filter_complex:
-            print(f"[Composer] Filter chain: video scale/crop/fps + drawtext subtitles")
+            print(f"[Composer] Filter chain: video scale/crop/fps + drawtext subtitles", flush=True)
+        
+        print(f"[Composer] CMD: {' '.join(cmd)}", flush=True)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
         if result.returncode != 0:
-            error_msg = result.stderr[-1500:] if result.stderr else "Unknown error"
-            print(f"[Composer] FFmpeg error: {error_msg}")
+            error_msg = result.stderr[-1500:] if result.stderr else str(result.stderr)
+            print(f"[Composer] FFmpeg error: {error_msg}", flush=True)
             
             # Fallback: retry without subtitles if drawtext filter is in use
             if show_subtitles and "drawtext" in filter_complex and "-shortest" not in str(cmd):
-                print(f"[Composer] Retrying without subtitles (fallback)...")
+                print(f"[Composer] Retrying without subtitles (fallback)...", flush=True)
                 # Rebuild command without subtitles
                 fallback_filter = (
                     f"[0:v]"
