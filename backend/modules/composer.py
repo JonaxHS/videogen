@@ -98,7 +98,7 @@ SUBTITLE_STYLES = {
         "boxcolor": "none",
         "position": "bottom",
         "y_offset": 220,
-        "line_spacing": -2,
+        "line_spacing": 20,
         "boxborderw": 0,
         "borderw": 10,
         "bordercolor": "black",
@@ -339,10 +339,16 @@ def _compose_segment(
             lines = clean_text.split('\n')
             filters = []
             
+            # Pre-calculate total block height to center the entire text block properly
+            total_lines = len(lines)
+            
             for i, line in enumerate(lines):
                 if not line.strip(): continue # Skip empty lines
                 
-                line_y = f"{y_pos} + {i} * (text_h + {line_spacing})"
+                # Base Y depends on position: 'bottom' vs 'center' 
+                # (y_pos string contains the math for the first line, e.g. "h-text_h-120")
+                # We add (fontsize + line_spacing) for each subsequent line instead of text_h to keep spacing perfectly even.
+                line_y = f"({y_pos}) + {i} * ({fontsize} + {line_spacing})"
                 
                 drawtext_parts = [
                     "drawtext=",
@@ -626,10 +632,7 @@ def _build_progressive_drawtext_filter(
         lines = clean_text.split('\n')
         filters = []
         for i, line in enumerate(lines):
-            # Calculate Y offset for this line
-            # Base Y position + (line index * (line height + spacing))
-            # Rough estimate: text_h is height of one line.
-            line_y = f"{y_pos} + {i} * (text_h + {line_spacing})"
+            line_y = f"({y_pos}) + {i} * ({fontsize} + {line_spacing})"
             
             parts = [
                 "drawtext=",
@@ -717,7 +720,7 @@ def _build_progressive_drawtext_filter(
         for i, line in enumerate(phrase_data['lines']):
             if not line.strip(): continue # Skip empty lines
             
-            line_y = f"{y_pos} + {i} * (text_h + {line_spacing})"
+            line_y = f"({y_pos}) + {i} * ({fontsize} + {line_spacing})"
             
             parts = [
                 "drawtext=",
