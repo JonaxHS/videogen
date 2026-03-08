@@ -18,10 +18,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 4G
         reservations:
           memory: 512M
-    memswap_limit: 1G
+    memswap_limit: 4G
 
   frontend:
     build: ./frontend
@@ -35,7 +35,7 @@ services:
   telegram-bot:
     build: ./backend
     container_name: videogen-telegram-bot
-    command: ["python", "telegram_bot.py"]
+    command: [ "python", "telegram_bot.py" ]
     env_file:
       - .env
     environment:
