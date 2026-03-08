@@ -358,12 +358,14 @@ def _compose_segment(
     # IMPORTANT: -stream_loop MUST come before -i, but -ss must come AFTER the maps (output-side seek)
     # Placing -ss before -i with -stream_loop causes FFmpeg to seek the raw file BEFORE the loop
     # activates, hitting EOF instantly when video is shorter than skip_seconds (e.g. 5s clip, 12s NASA skip).
+    needs_loop = (video_dur <= 0) or (video_dur < (audio_duration + skip_seconds))
     video_input_options = []
     if needs_loop:
         # -fflags +genpts prevents frame=0 dropping from reset timestamps in loops
         video_input_options.extend(["-stream_loop", "-1", "-fflags", "+genpts"])
 
     skip_opts = [] if skip_seconds <= 0.0 else ["-ss", str(skip_seconds)]  # Output-side seek (loop already active)
+
 
     if audio_path:
         cmd = [
