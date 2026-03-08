@@ -93,20 +93,20 @@ SUBTITLE_STYLES = {
         "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
     },
     "reel-impact": {
-        "fontsize": 74,
+        "fontsize": 62,
         "fontcolor": "white",
         "boxcolor": "none",
         "position": "bottom",
-        "y_offset": 190,
-        "line_spacing": 6,
+        "y_offset": 165,
+        "line_spacing": 4,
         "boxborderw": 0,
-        "borderw": 9,
+        "borderw": 8,
         "bordercolor": "black",
         "mode": "progressive",
         "max_steps": 14,
         "force_progressive": True,
         "font": "DejaVu Sans Bold",
-        "wrap_chars": 22,
+        "wrap_chars": 24,
         "max_lines": 2,
         "extra": ""
     },
@@ -654,6 +654,9 @@ def _build_progressive_drawtext_filter(
 def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> str:
     """Escape text for FFmpeg drawtext filter."""
     text = unicodedata.normalize("NFKC", text or "")
+    text = text.replace("□", " ").replace("�", " ")
+    text = text.replace("\u200b", " ").replace("\ufeff", " ")
+    text = "".join(ch for ch in text if unicodedata.category(ch) not in {"So", "Co", "Cs", "Cf"} or ch in {"¿", "¡"})
     text = "".join(ch for ch in text if ch.isprintable() or ch in {"\n", "\t", " "})
     # Order matters: escape backslash first, then other special chars
     text = text.replace('\\', '\\\\')    # Must be first
