@@ -18,6 +18,9 @@ OUTPUT_FORMAT = "mp4"
 NASA_INTRO_SKIP_SECONDS = float(os.getenv("NASA_INTRO_SKIP_SECONDS", "2.0"))
 ESA_INTRO_SKIP_SECONDS = float(os.getenv("ESA_INTRO_SKIP_SECONDS", "2.0"))
 FFMPEG_THREADS = max(1, int(os.getenv("FFMPEG_THREADS", "2")))
+LOWMEM_WIDTH = int(os.getenv("FFMPEG_LOWMEM_WIDTH", "720"))
+LOWMEM_HEIGHT = int(os.getenv("FFMPEG_LOWMEM_HEIGHT", "1280"))
+LOWMEM_FPS = int(os.getenv("FFMPEG_LOWMEM_FPS", "24"))
 
 # Subtitle styles: {name: {fontsize, color, bgcolor, position, extra_params}}
 SUBTITLE_STYLES = {
@@ -409,29 +412,30 @@ def _compose_segment(
         except OSError:
             pass
 
-    # Rebuild filter_complex without loop_filter logic (preloop handles it)
+    def _build_filter_chain(width: int, height: int, fps_value: int, subtitle_filter: str) -> str:
+        if show_subtitles and subtitle_filter:
+            return (
+                f"[0:v]"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop='min(iw,{width})':'min(ih,{height})':'(iw-min(iw,{width}))/2':'(ih-min(ih,{height}))/2',"
+                f"setsar=1,"
+                f"fps={fps_value}"
+                f"[scaled];"
+                f"[scaled]"
+                f"{subtitle_filter}"
+                f"[out]"
+            )
+        return (
+            f"[0:v]"
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop='min(iw,{width})':'min(ih,{height})':'(iw-min(iw,{width}))/2':'(ih-min(ih,{height}))/2',"
+            f"setsar=1,"
+            f"fps={fps_value}"
+            f"[out]"
+        )
+
     drawtext_filter_local = drawtext_filter if show_subtitles else ""
-    if show_subtitles and drawtext_filter_local:
-        filter_complex = (
-            f"[0:v]"
-            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
-            f"setsar=1,"
-            f"fps={FPS}"
-            f"[scaled];"
-            f"[scaled]"
-            f"{drawtext_filter_local}"
-            f"[out]"
-        )
-    else:
-        filter_complex = (
-            f"[0:v]"
-            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
-            f"setsar=1,"
-            f"fps={FPS}"
-            f"[out]"
-        )
+    filter_complex = _build_filter_chain(OUTPUT_WIDTH, OUTPUT_HEIGHT, FPS, drawtext_filter_local)
 
     # Input options: no more early inputs needed
     video_input_options = []
@@ -439,41 +443,58 @@ def _compose_segment(
     skip_opts = [] if skip_seconds <= 0.0 else ["-ss", str(skip_seconds)]  # Output-side seek
 
 
-    if audio_path:
-        cmd = [
+    def _build_ffmpeg_cmd(filter_chain: str, lowmem: bool = False) -> list[str]:
+        if lowmem:
+            video_codec_args = [
+                "-c:v", "libx264",
+                "-threads", "1",
+                "-preset", "ultrafast",
+                "-crf", "30",
+                "-pix_fmt", "yuv420p",
+                "-x264-params", "rc-lookahead=0:sync-lookahead=0:ref=1:bframes=0:subme=1:me=dia:trellis=0:aq-mode=0",
+            ]
+            audio_bitrate = "96k"
+        else:
+            video_codec_args = [
+                "-c:v", "libx264",
+                "-threads", str(FFMPEG_THREADS),
+                "-preset", "fast",
+                "-crf", "23",
+                "-pix_fmt", "yuv420p",
+            ]
+            audio_bitrate = "128k"
+
+        if audio_path:
+            return [
+                "ffmpeg", "-y",
+                *skip_opts,
+                *video_input_options,
+                "-i", video_path,
+                "-i", audio_path,
+                "-filter_complex", filter_chain,
+                "-map", "[out]",
+                "-map", "1:a",
+                *video_codec_args,
+                "-c:a", "aac",
+                "-b:a", audio_bitrate,
+                "-t", str(audio_duration),
+                output_path
+            ]
+
+        return [
             "ffmpeg", "-y",
-            *skip_opts,                   # Input-side seek for the video
-            *video_input_options,          # Loop args BEFORE -i (if any remain)
-            "-i", video_path,            # Input 0: video
-            "-i", audio_path,            # Input 1: TTS audio
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-map", "1:a",
-            "-c:v", "libx264",
-            "-threads", str(FFMPEG_THREADS),
-            "-preset", "fast",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-t", str(audio_duration),   # Trim to target duration
-            output_path
-        ]
-    else:
-        cmd = [
-            "ffmpeg", "-y",
-            *skip_opts,                   # Input-side seek for the video
+            *skip_opts,
             *video_input_options,
             "-i", video_path,
-            "-filter_complex", filter_complex,
+            "-filter_complex", filter_chain,
             "-map", "[out]",
-            "-c:v", "libx264",
-            "-threads", str(FFMPEG_THREADS),
-            "-preset", "fast",
-            "-crf", "23",
+            *video_codec_args,
             "-an",
             "-t", str(audio_duration),
             output_path
         ]
+
+    cmd = _build_ffmpeg_cmd(filter_complex, lowmem=False)
 
     try:
         print(f"[Composer] Composing segment: {output_path}", flush=True)
@@ -499,21 +520,22 @@ def _compose_segment(
             )
             print(f"[Composer] FFmpeg error: {error_msg}", flush=True)
             
-            # Fallback: retry without subtitles if drawtext filter is in use
+            # Fallback A: retry in low-memory mode when killed by OOM (signal 9)
+            if "signal 9" in exit_info:
+                print("[Composer] Retrying in low-memory mode (720x1280@24fps, ultrafast, single-thread)...", flush=True)
+                lowmem_filter = _build_filter_chain(LOWMEM_WIDTH, LOWMEM_HEIGHT, LOWMEM_FPS, drawtext_filter_local)
+                lowmem_cmd = _build_ffmpeg_cmd(lowmem_filter, lowmem=True)
+                lowmem_result = subprocess.run(lowmem_cmd, capture_output=True, text=True, timeout=300)
+                if lowmem_result.returncode == 0:
+                    print("[Composer] ✓ Low-memory fallback succeeded", flush=True)
+                    return
+
+            # Fallback B: retry without subtitles if drawtext filter is in use
             if show_subtitles and "drawtext" in filter_complex and "-shortest" not in str(cmd):
                 print(f"[Composer] Retrying without subtitles (fallback)...", flush=True)
                 # Rebuild command without subtitles
-                fallback_filter = (
-                    f"[0:v]"
-                    f"{loop_filter}"
-                    f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-                    f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
-                    f"setsar=1,"
-                    f"fps={FPS}"
-                    f"[out]"
-                )
-                fallback_cmd = cmd.copy()
-                fallback_cmd[fallback_cmd.index("-filter_complex") + 1] = fallback_filter
+                fallback_filter = _build_filter_chain(OUTPUT_WIDTH, OUTPUT_HEIGHT, FPS, "")
+                fallback_cmd = _build_ffmpeg_cmd(fallback_filter, lowmem=False)
                 result = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode == 0:
                     print(f"[Composer] ✓ Fallback (no subtitles) succeeded")
