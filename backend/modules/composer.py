@@ -630,31 +630,32 @@ def _build_progressive_drawtext_filter(
         accumulated_words = words[:word_idx]
         accumulated_text = ' '.join(accumulated_words)
         
-        # Check if accumulated text fits in max_lines
-        test_wrapped = _word_wrap(accumulated_text, max_chars=wrap_chars, max_lines=0)
-        test_line_count = len(test_wrapped.split('\\n'))
+        # Estimate if text fits in screen width based on character count
+        # For fontsize 62, roughly 24 chars per line for 1080px width
+        # Max 2 lines = ~48 chars total
+        max_chars_display = wrap_chars * max_lines  # e.g., 24 * 2 = 48 chars
         
-        if test_line_count <= max_lines:
-            # Fits in max_lines, show all accumulated words
+        if len(accumulated_text) <= max_chars_display:
+            # Fits comfortably, show all accumulated words
             display_text = accumulated_text
         else:
-            # Exceeds max_lines, use sliding window: show only last words that fit
-            # Find how many words from the end fit in max_lines
-            for start_idx in range(len(accumulated_words)):
-                window_words = accumulated_words[start_idx:]
-                window_text = ' '.join(window_words)
-                test_wrapped = _word_wrap(window_text, max_chars=wrap_chars, max_lines=0)
-                test_line_count = len(test_wrapped.split('\\n'))
-                
-                if test_line_count <= max_lines:
-                    display_text = window_text
+            # Too long, use sliding window: show only recent words that fit
+            chars_so_far = 0
+            words_to_show = []
+            
+            # Go backwards from current word, adding words until we hit the limit
+            for i in range(len(accumulated_words) - 1, -1, -1):
+                word = accumulated_words[i]
+                if chars_so_far + len(word) + 1 <= max_chars_display:
+                    words_to_show.insert(0, word)
+                    chars_so_far += len(word) + 1
+                else:
                     break
-            else:
-                # Fallback: show last word only
-                display_text = accumulated_words[-1]
+            
+            display_text = ' '.join(words_to_show) if words_to_show else accumulated_words[-1]
         
-        # Clean and escape for FFmpeg (no truncation)
-        escaped = _escape_ffmpeg_text(display_text, max_chars=wrap_chars, max_lines=0)
+        # Clean and escape for FFmpeg (no line wrapping, just clean text)
+        escaped = _escape_ffmpeg_text(display_text, max_chars=9999, max_lines=0)
         phrases.append({
             'text': escaped,
             'start': (word_idx - 1) * time_per_word,
@@ -724,18 +725,11 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
         if (unicodedata.category(ch)[0] in {"L", "N", "P", "Z", "M"} or ch in {"¿", "¡"})
     )
     
-    # Keep only printable characters
-    text = "".join(ch for ch in text if ch.isprintable() or ch in {"\n", "\t", " "})
+    # Keep only printable characters (excluding newlines)
+    text = "".join(ch for ch in text if ch.isprintable() and ch not in {"\n", "\r"})
     
-    # Collapse multiple spaces but preserve newlines
-    text = re.sub(r'[^\S\n]+', ' ', text).strip()
-    
-    # Apply word wrapping
-    text = _word_wrap(text, max_chars=max_chars, max_lines=max_lines)
-    
-    # Convert Python newlines to FFmpeg drawtext escape sequence BEFORE other escaping
-    # FFmpeg drawtext needs literal \n in the text (two characters: backslash and n)
-    text = text.replace('\n', '<<NEWLINE>>')  # Temporary placeholder
+    # Collapse multiple spaces
+    text = re.sub(r' +', ' ', text).strip()
     
     # Order matters: escape backslash first, then other special chars
     text = text.replace('\\', '\\\\')    # Must be first
@@ -744,9 +738,6 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     text = text.replace('%', '\\%')
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
-    
-    # Replace placeholder with escaped newline for FFmpeg
-    text = text.replace('<<NEWLINE>>', '\\n')
     
     return text
 
