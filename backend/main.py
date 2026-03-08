@@ -195,6 +195,42 @@ app.add_middleware(
 jobs: Dict[str, Dict[str, Any]] = {}
 executor = ThreadPoolExecutor(max_workers=2)
 
+# Global Job Queue for Sequential Processing
+job_queue: asyncio.Queue = asyncio.Queue()
+
+async def process_job_queue():
+    """Background worker that pulls jobs and processes them one at a time."""
+    print("[JobQueue] Worker started, listening for jobs...", flush=True)
+    while True:
+        try:
+            # Get the next job from the queue
+            func, args, kwargs = await job_queue.get()
+            job_id = kwargs.get("job_id")
+            if job_id and job_id in jobs:
+                jobs[job_id]["status"] = "running"
+            
+            # Execute the synchronous job in a thread pool
+            await asyncio.to_thread(func, *args, **kwargs)
+            
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[JobQueue] Exception in worker: {e}", flush=True)
+        finally:
+            job_queue.task_done()
+
+def enqueue_job(job_id: str, func, *args, **kwargs):
+    """Safely put a job on the global queue."""
+    if job_id in jobs:
+        jobs[job_id]["status"] = "queued"
+    kwargs["job_id"] = job_id
+    job_queue.put_nowait((func, args, kwargs))
+
+@app.on_event("startup")
+async def startup_event():
+    # Start the background worker
+    asyncio.create_task(process_job_queue())
+
 
 def _expire_job_artifacts(job_id: str) -> None:
     """Delete finished job output and remove job metadata after retention window."""
@@ -739,7 +775,7 @@ def preview_voice(req: VoicePreviewRequest):
 
 
 @app.post("/api/generate", response_model=GenerateResponse)
-def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
+def generate(req: GenerateRequest):
     if not req.script.strip():
         raise HTTPException(status_code=400, detail="Script cannot be empty")
 
@@ -762,10 +798,10 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         "title": req.script[:30].strip() + "..." if len(req.script) > 30 else req.script,
     }
 
-    # Run generation in background
-    background_tasks.add_task(
+    # Run generation in background sequentially
+    enqueue_job(
+        job_id,
         run_generation,
-        job_id=job_id,
         segments=segments,
         voice=req.voice,
         rate=req.rate,
@@ -784,7 +820,7 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
 
 
 @app.post("/api/generate-preview", response_model=GenerateResponse)
-def generate_preview(req: PreviewRequest, background_tasks: BackgroundTasks):
+def generate_preview(req: PreviewRequest):
     """Generate a full reel preview without TTS (video-only timeline)."""
     if not req.script.strip():
         raise HTTPException(status_code=400, detail="Script cannot be empty")
@@ -808,9 +844,9 @@ def generate_preview(req: PreviewRequest, background_tasks: BackgroundTasks):
         "title": req.script[:30].strip() + "..." if len(req.script) > 30 else req.script,
     }
 
-    background_tasks.add_task(
+    enqueue_job(
+        job_id,
         run_generation,
-        job_id=job_id,
         segments=segments,
         voice=DEFAULT_VOICE,
         rate="+0%",
