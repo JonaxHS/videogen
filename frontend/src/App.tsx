@@ -1412,6 +1412,8 @@ export default function App() {
             setSelectedVideos({})
             setVideoOptionsBySeg({})
             setPreviewingSeg(null)
+            setJobId(null)  // Limpiar video previo al vaciar script
+            setJob(null)
             return
         }
         const timer = setTimeout(async () => {
@@ -1419,6 +1421,9 @@ export default function App() {
                 const parsed = await apiPost<ParseResponse>('/parse', { script })
                 const newSegs = parsed.segments || []
                 setSegments(newSegs)
+                // Limpiar video previo al editar script
+                setJobId(null)
+                setJob(null)
                 // Preserve selected videos for segments that still exist
                 setSelectedVideos(prev => {
                     const preserved: Record<number, string> = {}
@@ -1526,6 +1531,7 @@ export default function App() {
         if (!script.trim()) return
         setError(null)
         setJob(null)
+        setJobId(null)  // Limpiar jobId previo para evitar confusión entre trabajos
         setLoading(true)
 
         try {
@@ -1551,6 +1557,7 @@ export default function App() {
         if (!script.trim()) return
         setError(null)
         setJob(null)
+        setJobId(null)  // Limpiar jobId previo para evitar confusión entre trabajos
         setLoading(true)
 
         try {
@@ -1943,7 +1950,7 @@ export default function App() {
                         <div className="card">
                             <div className="card-title"><span className="status-dot done" />¡Video listo!</div>
                             <div className="video-container">
-                                <video className="video-player" controls autoPlay src={`/api/download/${jobId}`} />
+                                <video className="video-player" controls autoPlay src={`/api/download/${jobId}?t=${Date.now()}`} key={jobId} />
                             </div>
                             <a
                                 className="btn-download"
