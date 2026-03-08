@@ -228,7 +228,32 @@ def _generate_whisper_srt(audio_path: str, subtitle_path: str):
     # transcribe con word_timestamps=True requiere openai-whisper actualizado
     # language="es" predeterminado si el usuario está en español, aunque Deepgram Aura solo habla inglés nativo por ahora
     # Lo forzaremos a espanol si de casualidad enviamos español
-    result = model.transcribe(audio_path, word_timestamps=True, language="es")
+    try:
+        result = model.transcribe(audio_path, word_timestamps=True, language="es")
+    except Exception as e:
+        print(f"[Whisper] word_timestamps=True failed for {audio_path}: {e}. Retrying without word_timestamps...")
+        try:
+            result = model.transcribe(audio_path, word_timestamps=False, language="es")
+            # Synthesize fake word timestamps from segment duration to prevent empty subtitles
+            for seg in result.get("segments", []):
+                text_split = seg.get("text", "").split()
+                if not text_split:
+                    continue
+                seg_duration = seg["end"] - seg["start"]
+                word_dur = seg_duration / len(text_split)
+                fake_words = []
+                for idx, w in enumerate(text_split):
+                    fake_words.append({
+                        "word": w,
+                        "start": seg["start"] + idx * word_dur,
+                        "end": seg["start"] + (idx + 1) * word_dur
+                    })
+                seg["words"] = fake_words
+        except Exception as e2:
+            print(f"[Whisper] Fallback failed for {audio_path}: {e2}")
+            with open(subtitle_path, "w", encoding="utf-8") as f:
+                f.write("")
+            return
     
     WORDS_PER_CHUNK = 4
     srt_content = []
