@@ -614,13 +614,57 @@ def _build_progressive_drawtext_filter(
         ]
         return "".join(parts)
 
-    steps = max(2, min(len(words), max_steps))
-    group_size = max(1, (len(words) + steps - 1) // steps)
+    # Build word chunks that fit within max_lines constraint
+    # Each chunk will be displayed as one temporal fragment
+    word_chunks = []
+    current_chunk = []
+    
+    for word in words:
+        test_chunk = current_chunk + [word]
+        test_text = ' '.join(test_chunk)
+        # Test how many lines this would take
+        test_wrapped = _word_wrap(test_text, max_chars=wrap_chars, max_lines=0)
+        test_lines = test_wrapped.split('\n')
+        
+        if len(test_lines) <= max_lines:
+            # Still fits within max_lines, add word
+            current_chunk.append(word)
+        else:
+            # Would exceed max_lines, save current chunk and start new
+            if current_chunk:
+                word_chunks.append(current_chunk[:])
+            current_chunk = [word]
+    
+    # Add last chunk
+    if current_chunk:
+        word_chunks.append(current_chunk[:])
+    
+    if not word_chunks:
+        word_chunks = [words]
+    
+    # Limit number of chunks to max_steps to avoid filter explosion
+    if len(word_chunks) > max_steps:
+        # Merge chunks to fit within max_steps
+        chunk_size = max(1, len(word_chunks) // max_steps)
+        merged_chunks = []
+        for i in range(0, len(word_chunks), chunk_size):
+            merged = []
+            for j in range(i, min(i + chunk_size, len(word_chunks))):
+                merged.extend(word_chunks[j])
+            merged_chunks.append(merged)
+        word_chunks = merged_chunks[:max_steps]
+    
+    # Build progressive phrases (each phrase shows words from all previous chunks)
     phrases = []
-    for end in range(group_size, len(words) + group_size, group_size):
-        phrase = " ".join(words[: min(end, len(words))]).strip()
-        if phrase:
-            phrases.append(_escape_ffmpeg_text(phrase, max_chars=wrap_chars, max_lines=max_lines))
+    accumulated_words = []
+    
+    for chunk in word_chunks:
+        accumulated_words.extend(chunk)
+        phrase_text = ' '.join(accumulated_words)
+        # Escape without line limit since chunks are already constrained
+        escaped = _escape_ffmpeg_text(phrase_text, max_chars=wrap_chars, max_lines=0)
+        phrases.append(escaped)
+    
     if not phrases:
         phrases = [safe_text]
 
@@ -654,10 +698,26 @@ def _build_progressive_drawtext_filter(
 def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> str:
     """Escape text for FFmpeg drawtext filter."""
     text = unicodedata.normalize("NFKC", text or "")
+    
+    # Remove common problematic characters
     text = text.replace("□", " ").replace("�", " ")
     text = text.replace("\u200b", " ").replace("\ufeff", " ")
-    text = "".join(ch for ch in text if unicodedata.category(ch) not in {"So", "Co", "Cs", "Cf"} or ch in {"¿", "¡"})
+    text = text.replace("\u2018", "'").replace("\u2019", "'")  # Smart quotes
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("\u2013", "-").replace("\u2014", "-")  # En/em dashes
+    text = text.replace("\u2026", "...")  # Ellipsis
+    
+    # Remove categories: So (Other Symbols), Co (Private Use), Cs (Surrogates), Cf (Format)
+    # Keep Spanish punctuation ¿¡
+    text = "".join(
+        ch for ch in text 
+        if unicodedata.category(ch) not in {"So", "Co", "Cs", "Cf", "Cn"} 
+        or ch in {"¿", "¡"}
+    )
+    
+    # Keep only printable characters
     text = "".join(ch for ch in text if ch.isprintable() or ch in {"\n", "\t", " "})
+    
     # Order matters: escape backslash first, then other special chars
     text = text.replace('\\', '\\\\')    # Must be first
     text = text.replace("'", "'\\''")    # Escape single quotes for shell
@@ -666,6 +726,7 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
     text = re.sub(r'\s+', ' ', text).strip()
+    
     return _word_wrap(text, max_chars=max_chars, max_lines=max_lines)
 
 
