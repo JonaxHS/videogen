@@ -733,6 +733,10 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     # Apply word wrapping
     text = _word_wrap(text, max_chars=max_chars, max_lines=max_lines)
     
+    # Convert Python newlines to FFmpeg drawtext escape sequence BEFORE other escaping
+    # FFmpeg drawtext needs literal \n in the text (two characters: backslash and n)
+    text = text.replace('\n', '<<NEWLINE>>')  # Temporary placeholder
+    
     # Order matters: escape backslash first, then other special chars
     text = text.replace('\\', '\\\\')    # Must be first
     text = text.replace("'", "'\\''")    # Escape single quotes for shell
@@ -741,8 +745,8 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
     
-    # Convert Python newlines to FFmpeg drawtext newlines
-    text = text.replace('\n', '\\N')
+    # Replace placeholder with escaped newline for FFmpeg
+    text = text.replace('<<NEWLINE>>', '\\n')
     
     return text
 
