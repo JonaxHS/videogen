@@ -949,9 +949,51 @@ def search_video_options(
 
     limited = ranked[: max(1, limit)]
     
+    # AGGRESSIVE Provider diversification: balance results across providers
+    # Don't let NASA/ESA dominate just because they have higher scores
+    if len(ranked) >= 6 and limit >= 4:
+        # Group by provider
+        by_provider = {}
+        for video in ranked:
+            p = video.get("provider", "unknown")
+            if p not in by_provider:
+                by_provider[p] = []
+            by_provider[p].append(video)
+        
+        # Sort providers by count and diversity
+        providers_sorted = sorted(by_provider.items(), key=lambda x: len(x[1]), reverse=True)
+        providers_available = len(providers_sorted)
+        
+        # Allocate slots: try to give each provider equal coverage
+        slots_per_provider = max(1, limit // providers_available)
+        if providers_available == 1:
+            # All from same provider, take top ones
+            limited = by_provider[providers_sorted[0][0]][:limit]
+        else:
+            # Mix from all providers
+            limited = []
+            for provider, videos in providers_sorted:
+                allocation = slots_per_provider
+                # Give extra slot to primary providers if we're short
+                if len(limited) + allocation < limit and len(limited) < limit:
+                    limited.extend(videos[:allocation])
+            
+            # If still short, fill with remaining best videos
+            if len(limited) < limit:
+                remaining = [v for v in ranked if v not in limited]
+                limited.extend(remaining[:limit - len(limited)])
+        
+        limited = limited[:limit]
+        print(f"[search_video_options] After diversification: {len(limited)} videos from {len(set(c.get('provider') for c in limited))} providers")
+        final_provider_mix = {}
+        for c in limited:
+            p = c.get("provider", "unknown")
+            final_provider_mix[p] = final_provider_mix.get(p, 0) + 1
+        print(f"[search_video_options] Final provider mix: {final_provider_mix}")
+    
     # Provider diversification: ensure variety in results (avoid all videos from same source)
     # Apply diversification when we have multiple results to choose from
-    if len(limited) >= 2 and len(ranked) >= 3:
+    elif len(limited) >= 2 and len(ranked) >= 3:
         # Check if all results are from the same provider
         providers_in_limited = {c.get("provider") for c in limited}
         if len(providers_in_limited) == 1 and len(ranked) > len(limited):
@@ -961,9 +1003,6 @@ def search_video_options(
                 if candidate.get("provider") != current_provider:
                     limited[-1] = candidate
                     break
-        # Full diversification for larger result sets
-        elif len(limited) >= 4:
-            limited = _diversify_providers(limited, limit)
 
     # Ensure NASA/ESA appears in global searches when available (useful for astronomy-focused reels)
     if global_search and limited:
