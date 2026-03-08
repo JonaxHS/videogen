@@ -328,35 +328,39 @@ def _compose_segment(
                 max_lines=max_lines,
             )
         else:
-            clean_text = _escape_ffmpeg_text(text, max_chars=wrap_chars, max_lines=max_lines, for_textfile=True)
-            import uuid
-            txt_path = os.path.join(os.path.dirname(output_path) or ".", f"sub_{uuid.uuid4().hex[:8]}_static.txt")
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(clean_text)
+            clean_text = _escape_ffmpeg_text(text, max_chars=wrap_chars, max_lines=max_lines)
+            lines = clean_text.split('\n')
+            filters = []
+            
+            for i, line in enumerate(lines):
+                if not line.strip(): continue # Skip empty lines
                 
-            drawtext_parts = [
-                "drawtext=",
-                f"textfile='{txt_path}':",
-                f"fontcolor={fontcolor}:",
-                f"fontsize={fontsize}:",
-                f"box={1 if use_box else 0}:",
-            ]
-            if use_box:
-                drawtext_parts.append(f"boxcolor={boxcolor}:")
-                drawtext_parts.append(f"boxborderw={boxborderw}:")
-            if borderw > 0:
-                drawtext_parts.append(f"borderw={borderw}:")
-                drawtext_parts.append(f"bordercolor={bordercolor}:")
+                line_y = f"{y_pos} + {i} * (text_h + {line_spacing})"
+                
+                drawtext_parts = [
+                    "drawtext=",
+                    f"text='{line}':",
+                    f"fontcolor={fontcolor}:",
+                    f"fontsize={fontsize}:",
+                    f"box={1 if use_box else 0}:",
+                ]
+                if use_box:
+                    drawtext_parts.append(f"boxcolor={boxcolor}:")
+                    drawtext_parts.append(f"boxborderw={boxborderw}:")
+                if borderw > 0:
+                    drawtext_parts.append(f"borderw={borderw}:")
+                    drawtext_parts.append(f"bordercolor={bordercolor}:")
 
-            drawtext_parts.extend([
-                "x=(w-text_w)/2:",
-                f"y={y_pos}:",
-                f"line_spacing={line_spacing}:",
-                f"font={font_name}:",
-                "fix_bounds=true",
-                f"{extra}",
-            ])
-            drawtext_filter = "".join(drawtext_parts)
+                drawtext_parts.extend([
+                    "x=(w-text_w)/2:",
+                    f"y={line_y}:",
+                    f"font={font_name}:",
+                    "fix_bounds=true",
+                    f"{extra}",
+                ])
+                filters.append("".join(drawtext_parts))
+                
+            drawtext_filter = ",".join(filters)
 
     # loop_filter will be set after video_dur is calculated below - placeholder
     loop_filter = ""  # Will be set after needs_loop is determined
@@ -611,27 +615,31 @@ def _build_progressive_drawtext_filter(
     temp_dir_local = os.path.dirname(output_path) or "."
     words = [w for w in (text or "").split() if w.strip()]
     if len(words) <= 1 or audio_duration <= 0.2:
-        txt_path = os.path.join(temp_dir_local, f"sub_{uuid.uuid4().hex[:8]}_short.txt")
-        clean_text = _escape_ffmpeg_text(text, max_chars=9999, max_lines=0, for_textfile=True)
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(clean_text)
+        clean_text = _escape_ffmpeg_text(text, max_chars=9999, max_lines=0)
+        lines = clean_text.split('\n')
+        filters = []
+        for i, line in enumerate(lines):
+            # Calculate Y offset for this line
+            # Base Y position + (line index * (line height + spacing))
+            # Rough estimate: text_h is height of one line.
+            line_y = f"{y_pos} + {i} * (text_h + {line_spacing})"
             
-        parts = [
-            "drawtext=",
-            f"textfile='{txt_path}':",
-            f"fontcolor={fontcolor}:",
-            f"fontsize={fontsize}:",
-            "box=0:",
-            f"borderw={max(0, int(borderw))}:",
-            f"bordercolor={bordercolor}:",
-            "x=(w-text_w)/2:",
-            f"y={y_pos}:",
-            f"line_spacing={line_spacing}:",
-            f"font={font_name}:",
-            "fix_bounds=true",
-            f"{extra}",
-        ]
-        return "".join(parts)
+            parts = [
+                "drawtext=",
+                f"text='{line}':",
+                f"fontcolor={fontcolor}:",
+                f"fontsize={fontsize}:",
+                "box=0:",
+                f"borderw={max(0, int(borderw))}:",
+                f"bordercolor={bordercolor}:",
+                "x=(w-text_w)/2:",
+                f"y={line_y}:",
+                f"font={font_name}:",
+                "fix_bounds=true",
+                f"{extra}",
+            ]
+            filters.append("".join(parts))
+        return ",".join(filters)
 
     # Strategy: Show words progressively (accumulating), word by word
     # When accumulated text exceeds max_lines, use sliding window (show only last words that fit)
@@ -673,14 +681,11 @@ def _build_progressive_drawtext_filter(
         # Manually wrap text to max_lines by inserting newlines
         wrapped_text = _manual_wrap_text(display_text, wrap_chars, max_lines)
         
-        # Clean and write to textfile for FFmpeg
-        clean_text = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0, for_textfile=True)
-        txt_path = os.path.join(temp_dir_local, f"sub_{uuid.uuid4().hex[:8]}_{word_idx}.txt")
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(clean_text)
-            
+        # Clean text
+        clean_text = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0)
+        
         phrases.append({
-            'textfile': txt_path,
+            'lines': clean_text.split('\n'),
             'start': (word_idx - 1) * time_per_word,
             'end': word_idx * time_per_word if word_idx < len(words) else audio_duration + 0.02
         })
@@ -702,23 +707,27 @@ def _build_progressive_drawtext_filter(
     filters = []
 
     for phrase_data in phrases:
-        parts = [
-            "drawtext=",
-            f"textfile='{phrase_data['textfile']}':",
-            f"fontcolor={fontcolor}:",
-            f"fontsize={fontsize}:",
-            "box=0:",
-            f"borderw={max(0, int(borderw))}:",
-            f"bordercolor={bordercolor}:",
-            "x=(w-text_w)/2:",
-            f"y={y_pos}:",
-            f"line_spacing={line_spacing}:",
-            f"font={font_name}:",
-            "fix_bounds=true:",
-            f"enable='between(t,{phrase_data['start']:.2f},{phrase_data['end']:.2f})'",
-            f"{extra}",
-        ]
-        filters.append("".join(parts))
+        for i, line in enumerate(phrase_data['lines']):
+            if not line.strip(): continue # Skip empty lines
+            
+            line_y = f"{y_pos} + {i} * (text_h + {line_spacing})"
+            
+            parts = [
+                "drawtext=",
+                f"text='{line}':",
+                f"fontcolor={fontcolor}:",
+                f"fontsize={fontsize}:",
+                "box=0:",
+                f"borderw={max(0, int(borderw))}:",
+                f"bordercolor={bordercolor}:",
+                "x=(w-text_w)/2:",
+                f"y={line_y}:",
+                f"font={font_name}:",
+                "fix_bounds=true:",
+                f"enable='between(t,{phrase_data['start']:.2f},{phrase_data['end']:.2f})'",
+                f"{extra}",
+            ]
+            filters.append("".join(parts))
 
     return ",".join(filters)
 
