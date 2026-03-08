@@ -61,6 +61,18 @@ interface CacheSettings {
     cleanup_interval_seconds: number
     min_relevance_score: number
     min_relevance_score_global: number
+    job_retention_seconds: number
+}
+
+interface StorageFolderStat {
+    key: string
+    path: string
+    bytes: number
+    human: string
+}
+
+interface StorageStatsResponse {
+    folders: StorageFolderStat[]
 }
 
 interface ParseResponse {
@@ -941,8 +953,13 @@ function ConfigPanel({
     const [maxFileAgeDays, setMaxFileAgeDays] = useState(1)
     const [maxFileAgeHours, setMaxFileAgeHours] = useState(12)
     const [cleanupIntervalSeconds, setCleanupIntervalSeconds] = useState(30)
+    const [jobRetentionSeconds, setJobRetentionSeconds] = useState(120)
     const [minRelevanceScore, setMinRelevanceScore] = useState(0.22)
     const [minRelevanceScoreGlobal, setMinRelevanceScoreGlobal] = useState(0.16)
+    const [storageStats, setStorageStats] = useState<StorageFolderStat[]>([])
+    const [storageLoading, setStorageLoading] = useState(false)
+    const [tempPurgeLoading, setTempPurgeLoading] = useState(false)
+    const [tempPurgeMessage, setTempPurgeMessage] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
 
@@ -963,6 +980,7 @@ function ConfigPanel({
                 setCleanupIntervalSeconds(settings.cleanup_interval_seconds || 30)
                 setMinRelevanceScore(Number(settings.min_relevance_score ?? 0.22))
                 setMinRelevanceScoreGlobal(Number(settings.min_relevance_score_global ?? 0.16))
+                setJobRetentionSeconds(Number(settings.job_retention_seconds ?? 120))
             })
             .catch(() => {
                 // Keep defaults if endpoint is temporarily unavailable
@@ -971,6 +989,22 @@ function ConfigPanel({
             cancelled = true
         }
     }, [])
+
+    const refreshStorageStats = useCallback(async () => {
+        setStorageLoading(true)
+        try {
+            const res = await apiGet<StorageStatsResponse>('/storage-stats')
+            setStorageStats(res.folders || [])
+        } catch {
+            // keep previous stats on transient errors
+        } finally {
+            setStorageLoading(false)
+        }
+    }, [])
+
+    useEffect(() => {
+        refreshStorageStats()
+    }, [refreshStorageStats])
 
     const handleSave = async () => {
         setError(null)
@@ -1001,6 +1035,7 @@ function ConfigPanel({
         try {
             const res = await apiPost<any>('/cleanup', {})
             setCleanupMessage(`✅ ${res.message}\nLiberados: ${res.freed}`)
+            refreshStorageStats()
             setTimeout(() => setCleanupMessage(null), 5000)
         } catch (e: unknown) {
             setCleanupMessage(`❌ Error: ${e instanceof Error ? e.message : 'Error desconocido'}`)
@@ -1020,6 +1055,7 @@ function ConfigPanel({
                 cleanup_interval_seconds: cleanupIntervalSeconds,
                 min_relevance_score: minRelevanceScore,
                 min_relevance_score_global: minRelevanceScoreGlobal,
+                job_retention_seconds: jobRetentionSeconds,
             })
             setCacheSettingsMessage(`✅ ${res.message}`)
             setTimeout(() => setCacheSettingsMessage(null), 4000)
@@ -1027,6 +1063,21 @@ function ConfigPanel({
             setCacheSettingsMessage(`❌ Error: ${e instanceof Error ? e.message : 'Error desconocido'}`)
         } finally {
             setCacheSettingsLoading(false)
+        }
+    }
+
+    const handlePurgeTemp = async () => {
+        setTempPurgeLoading(true)
+        setTempPurgeMessage(null)
+        try {
+            const res = await apiPost<any>('/temp-purge', {})
+            setTempPurgeMessage(`✅ ${res.message}\nAntes: ${res.before} | Después: ${res.after} | Liberado: ${res.freed}`)
+            refreshStorageStats()
+            setTimeout(() => setTempPurgeMessage(null), 6000)
+        } catch (e: unknown) {
+            setTempPurgeMessage(`❌ Error: ${e instanceof Error ? e.message : 'Error desconocido'}`)
+        } finally {
+            setTempPurgeLoading(false)
         }
     }
 
@@ -1154,6 +1205,16 @@ function ConfigPanel({
                                     />
                                 </div>
                                 <div>
+                                    <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Duración del video final (s)</label>
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        value={jobRetentionSeconds}
+                                        onChange={e => setJobRetentionSeconds(Number(e.target.value || 0))}
+                                        disabled={cacheSettingsLoading}
+                                    />
+                                </div>
+                                <div>
                                     <label style={{ display: 'block', marginBottom: 6, fontSize: 12, opacity: 0.8 }}>Expirar por horas</label>
                                     <input
                                         type="number"
@@ -1270,6 +1331,89 @@ function ConfigPanel({
                                     {cleanupMessage}
                                 </div>
                             )}
+                        </div>
+
+                        <div className="config-field">
+                            <label>🗑️ Borrar TODO cache/temp</label>
+                            <p className="config-hint">
+                                Borra completamente la carpeta temporal donde se acumuló el pico de 42GB.
+                            </p>
+                            <button
+                                onClick={handlePurgeTemp}
+                                disabled={tempPurgeLoading}
+                                style={{
+                                    width: '100%',
+                                    background: 'linear-gradient(135deg, #b91c1c, #7f1d1d)',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    color: 'white',
+                                    padding: '10px 12px',
+                                    cursor: tempPurgeLoading ? 'not-allowed' : 'pointer',
+                                    opacity: tempPurgeLoading ? 0.7 : 1,
+                                    fontWeight: 500,
+                                    marginTop: 8,
+                                }}
+                            >
+                                {tempPurgeLoading ? '⏳ Borrando temp...' : '🔥 Borrar todo cache/temp'}
+                            </button>
+                            {tempPurgeMessage && (
+                                <div style={{
+                                    marginTop: 12,
+                                    padding: 10,
+                                    borderRadius: 6,
+                                    background: tempPurgeMessage.startsWith('✅') ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                    border: `1px solid ${tempPurgeMessage.startsWith('✅') ? '#22c55e' : '#ef4444'}`,
+                                    fontSize: 13,
+                                    color: 'var(--text)',
+                                    whiteSpace: 'pre-wrap',
+                                }}>
+                                    {tempPurgeMessage}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="config-field">
+                            <label>📦 Peso por carpeta (ahora)</label>
+                            <p className="config-hint">
+                                Estado actual del uso de disco para output y cache.
+                            </p>
+                            <button
+                                onClick={refreshStorageStats}
+                                disabled={storageLoading}
+                                style={{
+                                    width: '100%',
+                                    background: 'linear-gradient(135deg, #334155, #1f2937)',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    color: 'white',
+                                    padding: '8px 10px',
+                                    cursor: storageLoading ? 'not-allowed' : 'pointer',
+                                    opacity: storageLoading ? 0.7 : 1,
+                                    fontWeight: 500,
+                                    marginBottom: 10,
+                                }}
+                            >
+                                {storageLoading ? '⏳ Actualizando tamaños...' : '🔄 Actualizar tamaños'}
+                            </button>
+
+                            <div style={{ display: 'grid', gap: 6 }}>
+                                {storageStats.map((folder) => (
+                                    <div key={folder.key} style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        padding: '8px 10px',
+                                        border: '1px solid var(--border)',
+                                        borderRadius: 6,
+                                        fontSize: 12,
+                                    }}>
+                                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 8 }}>
+                                            {folder.path}
+                                        </div>
+                                        <strong>{folder.human}</strong>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
 

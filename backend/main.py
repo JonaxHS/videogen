@@ -276,6 +276,7 @@ class CacheSettingsRequest(BaseModel):
     cleanup_interval_seconds: int = 30
     min_relevance_score: float = 0.22
     min_relevance_score_global: float = 0.16
+    job_retention_seconds: int = 120
 
 
 class ParseRequest(BaseModel):
@@ -353,6 +354,7 @@ def get_cache_settings():
         "cleanup_interval_seconds": CACHE_CLEANUP_INTERVAL_SECONDS,
         "min_relevance_score": MIN_RELEVANCE_SCORE,
         "min_relevance_score_global": MIN_RELEVANCE_SCORE_GLOBAL,
+        "job_retention_seconds": JOB_RETENTION_SECONDS,
     }
 
 
@@ -364,6 +366,7 @@ def save_cache_settings(req: CacheSettingsRequest):
     cleanup_interval_seconds = max(10, int(req.cleanup_interval_seconds))
     min_relevance_score = min(1.0, max(0.0, float(req.min_relevance_score)))
     min_relevance_score_global = min(1.0, max(0.0, float(req.min_relevance_score_global)))
+    job_retention_seconds = max(10, int(req.job_retention_seconds))
 
     if max_file_age_days == 0 and max_file_age_hours == 0:
         raise HTTPException(status_code=400, detail="Debes definir antigüedad por días u horas")
@@ -375,6 +378,7 @@ def save_cache_settings(req: CacheSettingsRequest):
         "CACHE_CLEANUP_INTERVAL_SECONDS": str(cleanup_interval_seconds),
         "MIN_RELEVANCE_SCORE": str(min_relevance_score),
         "MIN_RELEVANCE_SCORE_GLOBAL": str(min_relevance_score_global),
+        "JOB_RETENTION_SECONDS": str(job_retention_seconds),
     })
     _reload_env_globals()
     _apply_cache_settings_to_video_search(force_cleanup=True)
@@ -389,7 +393,111 @@ def save_cache_settings(req: CacheSettingsRequest):
             "cleanup_interval_seconds": CACHE_CLEANUP_INTERVAL_SECONDS,
             "min_relevance_score": MIN_RELEVANCE_SCORE,
             "min_relevance_score_global": MIN_RELEVANCE_SCORE_GLOBAL,
+            "job_retention_seconds": JOB_RETENTION_SECONDS,
         },
+    }
+
+
+def _dir_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    total = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file():
+                total += p.stat().st_size
+        except Exception:
+            continue
+    return total
+
+
+def _bytes_to_human(num_bytes: int) -> str:
+    value = float(max(0, int(num_bytes)))
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = 0
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024.0
+        idx += 1
+    return f"{value:.1f}{units[idx]}"
+
+
+@app.get("/api/storage-stats")
+def storage_stats():
+    cache_videos_dir = CACHE_DIR / "videos"
+    cache_temp_dir = CACHE_DIR / "temp"
+
+    output_bytes = _dir_size_bytes(OUTPUT_DIR)
+    cache_total_bytes = _dir_size_bytes(CACHE_DIR)
+    cache_videos_bytes = _dir_size_bytes(cache_videos_dir)
+    cache_temp_bytes = _dir_size_bytes(cache_temp_dir)
+
+    folders = [
+        {
+            "key": "output",
+            "path": str(OUTPUT_DIR),
+            "bytes": output_bytes,
+            "human": _bytes_to_human(output_bytes),
+        },
+        {
+            "key": "cache_total",
+            "path": str(CACHE_DIR),
+            "bytes": cache_total_bytes,
+            "human": _bytes_to_human(cache_total_bytes),
+        },
+        {
+            "key": "cache_videos",
+            "path": str(cache_videos_dir),
+            "bytes": cache_videos_bytes,
+            "human": _bytes_to_human(cache_videos_bytes),
+        },
+        {
+            "key": "cache_temp",
+            "path": str(cache_temp_dir),
+            "bytes": cache_temp_bytes,
+            "human": _bytes_to_human(cache_temp_bytes),
+        },
+    ]
+
+    folders.sort(key=lambda item: item["bytes"], reverse=True)
+    return {"folders": folders}
+
+
+@app.post("/api/temp-purge")
+def purge_temp_workspace():
+    active_jobs = [j for j in jobs.values() if j.get("status") in {"queued", "running"}]
+    if active_jobs:
+        raise HTTPException(
+            status_code=409,
+            detail="Hay una generación en curso. Espera a que termine para borrar todo cache/temp.",
+        )
+
+    before_bytes = _dir_size_bytes(TEMP_DIR)
+    removed_dirs = 0
+    removed_files = 0
+
+    if TEMP_DIR.exists():
+        for child in TEMP_DIR.iterdir():
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+                    removed_dirs += 1
+                else:
+                    child.unlink(missing_ok=True)
+                    removed_files += 1
+            except Exception:
+                continue
+
+    after_bytes = _dir_size_bytes(TEMP_DIR)
+    freed_bytes = max(0, before_bytes - after_bytes)
+
+    return {
+        "success": True,
+        "message": "Se borró por completo cache/temp",
+        "removed_dirs": removed_dirs,
+        "removed_files": removed_files,
+        "before": _bytes_to_human(before_bytes),
+        "after": _bytes_to_human(after_bytes),
+        "freed": _bytes_to_human(freed_bytes),
     }
 
 
@@ -495,6 +603,7 @@ def _reload_env_globals():
     global PEXELS_API_KEY, PIXABAY_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, TELEGRAM_BOT_TOKEN
     global TELEGRAM_DEFAULT_VOICE, TELEGRAM_DEFAULT_RATE, TELEGRAM_DEFAULT_PITCH
     global TELEGRAM_DEFAULT_SHOW_SUBTITLES, TELEGRAM_DEFAULT_SUBTITLE_STYLE
+    global JOB_RETENTION_SECONDS
     global MAX_CACHE_SIZE_MB, MAX_FILE_AGE_DAYS, MAX_FILE_AGE_HOURS, CACHE_CLEANUP_INTERVAL_SECONDS
     global MIN_RELEVANCE_SCORE, MIN_RELEVANCE_SCORE_GLOBAL
 
@@ -515,6 +624,7 @@ def _reload_env_globals():
     CACHE_CLEANUP_INTERVAL_SECONDS = int(os.getenv("CACHE_CLEANUP_INTERVAL_SECONDS", "30"))
     MIN_RELEVANCE_SCORE = float(os.getenv("MIN_RELEVANCE_SCORE", "0.22"))
     MIN_RELEVANCE_SCORE_GLOBAL = float(os.getenv("MIN_RELEVANCE_SCORE_GLOBAL", "0.16"))
+    JOB_RETENTION_SECONDS = max(10, int(os.getenv("JOB_RETENTION_SECONDS", "120")))
     _apply_cache_settings_to_video_search(force_cleanup=False)
 
 
