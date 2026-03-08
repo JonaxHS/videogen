@@ -93,22 +93,22 @@ SUBTITLE_STYLES = {
         "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
     },
     "reel-impact": {
-        "fontsize": 62,
+        "fontsize": 74,
         "fontcolor": "white",
         "boxcolor": "none",
         "position": "bottom",
-        "y_offset": 165,
-        "line_spacing": 4,
+        "y_offset": 220,
+        "line_spacing": -2,
         "boxborderw": 0,
-        "borderw": 8,
+        "borderw": 10,
         "bordercolor": "black",
         "mode": "progressive",
         "max_steps": 30,  # Allow more steps for word-by-word display
         "force_progressive": True,
         "font": "DejaVu Sans Bold",
-        "wrap_chars": 24,
-        "max_lines": 2,
-        "extra": ""
+        "wrap_chars": 20,
+        "max_lines": 3,
+        "extra": ":shadowx=4:shadowy=4:shadowcolor=black@0.6"
     },
 }
 
@@ -274,6 +274,13 @@ def _compose_segment(
         if len(text) > 120:
             words = text.split()
             safe_text = _escape_ffmpeg_text(' '.join(words[:20]) + '...', max_chars=wrap_chars, max_lines=max_lines)
+
+        font_name = str(style.get("font", "Sans"))
+        
+        # reel-impact and similar heavy fonts look best in uppercase
+        if font_name == "DejaVu Sans Bold" or subtitle_style == "reel-impact":
+            text = text.upper()
+            safe_text = safe_text.upper()
 
         # Get style config
         fontsize = style["fontsize"]
