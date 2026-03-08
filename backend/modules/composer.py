@@ -103,7 +103,7 @@ SUBTITLE_STYLES = {
         "borderw": 8,
         "bordercolor": "black",
         "mode": "progressive",
-        "max_steps": 14,
+        "max_steps": 30,  # Allow more steps for word-by-word display
         "force_progressive": True,
         "font": "DejaVu Sans Bold",
         "wrap_chars": 24,
@@ -617,63 +617,70 @@ def _build_progressive_drawtext_filter(
         ]
         return "".join(parts)
 
-    # Strategy: Divide words into groups that each fit in max_lines
-    # Show each group sequentially (not accumulated)
+    # Strategy: Show words progressively (accumulating), word by word
+    # When accumulated text exceeds max_lines, use sliding window (show only last words that fit)
+    
+    # Calculate time per word for synchronization
+    time_per_word = audio_duration / len(words)
     
     phrases = []
-    word_index = 0
     
-    while word_index < len(words):
-        # Build a phrase that fits in max_lines
-        phrase_words = []
+    for word_idx in range(1, len(words) + 1):
+        # Get words up to this point
+        accumulated_words = words[:word_idx]
+        accumulated_text = ' '.join(accumulated_words)
         
-        for i in range(word_index, len(words)):
-            test_words = phrase_words + [words[i]]
-            test_text = ' '.join(test_words)
-            test_wrapped = _word_wrap(test_text, max_chars=wrap_chars, max_lines=0)
-            test_line_count = len(test_wrapped.split('\\n'))
-            
-            if test_line_count <= max_lines:
-                phrase_words.append(words[i])
-            else:
-                # Adding this word would exceed max_lines, stop here
-                break
+        # Check if accumulated text fits in max_lines
+        test_wrapped = _word_wrap(accumulated_text, max_chars=wrap_chars, max_lines=0)
+        test_line_count = len(test_wrapped.split('\\n'))
         
-        # If we couldn't add any word (word too long), force add it anyway
-        if not phrase_words and word_index < len(words):
-            phrase_words = [words[word_index]]
-        
-        if phrase_words:
-            phrase_text = ' '.join(phrase_words)
-            # Clean and escape for FFmpeg (pass max_lines=0 to avoid truncation with ...)
-            escaped = _escape_ffmpeg_text(phrase_text, max_chars=wrap_chars, max_lines=0)
-            phrases.append(escaped)
-            word_index += len(phrase_words)
+        if test_line_count <= max_lines:
+            # Fits in max_lines, show all accumulated words
+            display_text = accumulated_text
         else:
-            break
+            # Exceeds max_lines, use sliding window: show only last words that fit
+            # Find how many words from the end fit in max_lines
+            for start_idx in range(len(accumulated_words)):
+                window_words = accumulated_words[start_idx:]
+                window_text = ' '.join(window_words)
+                test_wrapped = _word_wrap(window_text, max_chars=wrap_chars, max_lines=0)
+                test_line_count = len(test_wrapped.split('\\n'))
+                
+                if test_line_count <= max_lines:
+                    display_text = window_text
+                    break
+            else:
+                # Fallback: show last word only
+                display_text = accumulated_words[-1]
+        
+        # Clean and escape for FFmpeg (no truncation)
+        escaped = _escape_ffmpeg_text(display_text, max_chars=wrap_chars, max_lines=0)
+        phrases.append({
+            'text': escaped,
+            'start': (word_idx - 1) * time_per_word,
+            'end': word_idx * time_per_word if word_idx < len(words) else audio_duration + 0.02
+        })
     
-    # Limit to max_steps by merging adjacent phrases if needed
+    # Limit to max_steps by sampling evenly if needed
     if len(phrases) > max_steps:
-        step_size = max(1, len(phrases) // max_steps)
-        merged_phrases = []
-        for i in range(0, len(phrases), step_size):
-            chunk = phrases[i:i+step_size]
-            # For merged phrases, just use the last one (most recent words)
-            merged_phrases.append(chunk[-1])
-        phrases = merged_phrases[:max_steps]
+        step = max(1, len(phrases) // max_steps)
+        sampled_phrases = []
+        for i in range(0, len(phrases), step):
+            sampled_phrases.append(phrases[i])
+        # Always include the last phrase (complete text)
+        if sampled_phrases[-1] != phrases[-1]:
+            sampled_phrases.append(phrases[-1])
+        phrases = sampled_phrases[:max_steps]
     
     if not phrases:
-        phrases = [safe_text]
+        phrases = [{'text': safe_text, 'start': 0, 'end': audio_duration}]
 
-    step_duration = max(0.08, audio_duration / max(1, len(phrases)))
     filters = []
 
-    for idx, phrase in enumerate(phrases):
-        start_t = idx * step_duration
-        end_t = audio_duration + 0.02 if idx == len(phrases) - 1 else (idx + 1) * step_duration
+    for phrase_data in phrases:
         parts = [
             "drawtext=",
-            f"text='{phrase}':",
+            f"text='{phrase_data['text']}':",
             f"fontcolor={fontcolor}:",
             f"fontsize={fontsize}:",
             "box=0:",
@@ -684,7 +691,7 @@ def _build_progressive_drawtext_filter(
             f"line_spacing={line_spacing}:",
             f"font={font_name}:",
             "fix_bounds=true:",
-            f"enable='between(t,{start_t:.2f},{end_t:.2f})'",
+            f"enable='between(t,{phrase_data['start']:.2f},{phrase_data['end']:.2f})'",
             f"{extra}",
         ]
         filters.append("".join(parts))
