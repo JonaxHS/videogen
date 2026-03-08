@@ -2083,6 +2083,7 @@ export default function App() {
                                         <option value="minimal">🔍 Minimalista (Pequeño/Arriba)</option>
                                         <option value="neon">💫 Neón (Cyan brillante)</option>
                                         <option value="karaoke">🎤 Karaoke (Progresivo)</option>
+                                        <option value="reel-impact">⚪ Impacto Reel (Blanco grueso)</option>
                                     </select>
                                 </div>
                             )}

@@ -91,6 +91,17 @@ SUBTITLE_STYLES = {
         "mode": "progressive",
         "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
     },
+    "reel-impact": {
+        "fontsize": 70,
+        "fontcolor": "white",
+        "boxcolor": "none",
+        "position": "bottom",
+        "line_spacing": 9,
+        "boxborderw": 0,
+        "borderw": 7,
+        "bordercolor": "black",
+        "extra": ":shadowx=1:shadowy=1:shadowcolor=black@0.6"
+    },
 }
 
 # Default style
