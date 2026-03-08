@@ -302,9 +302,12 @@ def _compose_segment(
 
         # For texts with many words, use simple mode to avoid too many drawtext filters
         words = [w for w in (text or "").split() if w.strip()]
-        use_simple_mode = len(words) > 12 and not force_progressive
+        force_progressive = bool(style.get("force_progressive", False))
+        use_simple_mode = len(words) > 20 and not force_progressive
         if use_simple_mode:
             print(f"[Composer] Text has {len(words)} words: using simple mode (static subtitle)")
+        elif force_progressive:
+            print(f"[Composer] Text has {len(words)} words: forcing progressive mode")
 
         if mode == "progressive" and not use_simple_mode:
             drawtext_filter = _build_progressive_drawtext_filter(
@@ -614,56 +617,50 @@ def _build_progressive_drawtext_filter(
         ]
         return "".join(parts)
 
-    # Build word chunks that fit within max_lines constraint
-    # Each chunk will be displayed as one temporal fragment
-    word_chunks = []
-    current_chunk = []
+    # Strategy: Divide words into groups that each fit in max_lines
+    # Show each group sequentially (not accumulated)
     
-    for word in words:
-        test_chunk = current_chunk + [word]
-        test_text = ' '.join(test_chunk)
-        # Test how many lines this would take
-        test_wrapped = _word_wrap(test_text, max_chars=wrap_chars, max_lines=0)
-        test_lines = test_wrapped.split('\n')
-        
-        if len(test_lines) <= max_lines:
-            # Still fits within max_lines, add word
-            current_chunk.append(word)
-        else:
-            # Would exceed max_lines, save current chunk and start new
-            if current_chunk:
-                word_chunks.append(current_chunk[:])
-            current_chunk = [word]
-    
-    # Add last chunk
-    if current_chunk:
-        word_chunks.append(current_chunk[:])
-    
-    if not word_chunks:
-        word_chunks = [words]
-    
-    # Limit number of chunks to max_steps to avoid filter explosion
-    if len(word_chunks) > max_steps:
-        # Merge chunks to fit within max_steps
-        chunk_size = max(1, len(word_chunks) // max_steps)
-        merged_chunks = []
-        for i in range(0, len(word_chunks), chunk_size):
-            merged = []
-            for j in range(i, min(i + chunk_size, len(word_chunks))):
-                merged.extend(word_chunks[j])
-            merged_chunks.append(merged)
-        word_chunks = merged_chunks[:max_steps]
-    
-    # Build progressive phrases (each phrase shows words from all previous chunks)
     phrases = []
-    accumulated_words = []
+    word_index = 0
     
-    for chunk in word_chunks:
-        accumulated_words.extend(chunk)
-        phrase_text = ' '.join(accumulated_words)
-        # Escape without line limit since chunks are already constrained
-        escaped = _escape_ffmpeg_text(phrase_text, max_chars=wrap_chars, max_lines=0)
-        phrases.append(escaped)
+    while word_index < len(words):
+        # Build a phrase that fits in max_lines
+        phrase_words = []
+        
+        for i in range(word_index, len(words)):
+            test_words = phrase_words + [words[i]]
+            test_text = ' '.join(test_words)
+            test_wrapped = _word_wrap(test_text, max_chars=wrap_chars, max_lines=0)
+            test_line_count = len(test_wrapped.split('\\n'))
+            
+            if test_line_count <= max_lines:
+                phrase_words.append(words[i])
+            else:
+                # Adding this word would exceed max_lines, stop here
+                break
+        
+        # If we couldn't add any word (word too long), force add it anyway
+        if not phrase_words and word_index < len(words):
+            phrase_words = [words[word_index]]
+        
+        if phrase_words:
+            phrase_text = ' '.join(phrase_words)
+            # Clean and escape for FFmpeg (pass max_lines=0 to avoid truncation with ...)
+            escaped = _escape_ffmpeg_text(phrase_text, max_chars=wrap_chars, max_lines=0)
+            phrases.append(escaped)
+            word_index += len(phrase_words)
+        else:
+            break
+    
+    # Limit to max_steps by merging adjacent phrases if needed
+    if len(phrases) > max_steps:
+        step_size = max(1, len(phrases) // max_steps)
+        merged_phrases = []
+        for i in range(0, len(phrases), step_size):
+            chunk = phrases[i:i+step_size]
+            # For merged phrases, just use the last one (most recent words)
+            merged_phrases.append(chunk[-1])
+        phrases = merged_phrases[:max_steps]
     
     if not phrases:
         phrases = [safe_text]
@@ -699,8 +696,14 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     """Escape text for FFmpeg drawtext filter."""
     text = unicodedata.normalize("NFKC", text or "")
     
-    # Remove common problematic characters
+    # Remove ALL box/block drawing characters (U+2500-U+257F)
+    # and geometric shapes (U+25A0-U+25FF)
+    for code in range(0x2500, 0x2600):
+        text = text.replace(chr(code), " ")
+    
+    # Remove specific problematic characters
     text = text.replace("□", " ").replace("�", " ")
+    text = text.replace("■", " ").replace("▪", " ").replace("▫", " ")
     text = text.replace("\u200b", " ").replace("\ufeff", " ")
     text = text.replace("\u2018", "'").replace("\u2019", "'")  # Smart quotes
     text = text.replace("\u201c", '"').replace("\u201d", '"')
@@ -708,11 +711,10 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     text = text.replace("\u2026", "...")  # Ellipsis
     
     # Remove categories: So (Other Symbols), Co (Private Use), Cs (Surrogates), Cf (Format)
-    # Keep Spanish punctuation ¿¡
+    # Keep Spanish punctuation ¿¡ and basic letters/numbers/punctuation
     text = "".join(
         ch for ch in text 
-        if unicodedata.category(ch) not in {"So", "Co", "Cs", "Cf", "Cn"} 
-        or ch in {"¿", "¡"}
+        if (unicodedata.category(ch)[0] in {"L", "N", "P", "Z", "M"} or ch in {"¿", "¡"})
     )
     
     # Keep only printable characters
