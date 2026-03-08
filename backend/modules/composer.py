@@ -363,15 +363,30 @@ def _compose_segment(
     # Determine if video needs looping (shorter than what we need to output)
     needs_loop = (video_dur <= 0) or (video_dur < (audio_duration + skip_seconds))
 
-    # Now that we know needs_loop, update loop_filter and rebuild filter_complex with it
-    loop_filter = "loop=loop=-1:size=32767:start=0," if needs_loop else ""
+    # Two-pass approach: if looping is needed, pre-render the looped stream first.
+    # This prevents the known FFmpeg bug where `-stream_loop -1` combined with H264 MP4s
+    # and a second audio stream silently outputs 0 frames.
+    if needs_loop:
+        preloop_path = os.path.join(TEMP_SEG_DIR, f"preloop_{os.path.basename(video_path)}")
+        # Fast copy of the repeated stream up to the needed duration
+        target_len = audio_duration + skip_seconds
+        preloop_cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1",
+            "-i", video_path,
+            "-c", "copy",
+            "-t", str(target_len),
+            preloop_path
+        ]
+        print(f"[Composer] Pre-looping short video to {target_len}s...")
+        subprocess.run(preloop_cmd, capture_output=True)
+        video_path = preloop_path  # Use the pre-looped file for the main composition
 
-    # Rebuild filter_complex with the correct loop_filter
+    # Rebuild filter_complex without loop_filter logic (preloop handles it)
     drawtext_filter_local = drawtext_filter if show_subtitles else ""
     if show_subtitles and drawtext_filter_local:
         filter_complex = (
             f"[0:v]"
-            f"{loop_filter}"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
             f"setsar=1,"
@@ -384,7 +399,6 @@ def _compose_segment(
     else:
         filter_complex = (
             f"[0:v]"
-            f"{loop_filter}"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
             f"setsar=1,"
@@ -392,7 +406,7 @@ def _compose_segment(
             f"[out]"
         )
 
-    # Input options: no more -stream_loop (replaced by loop filter in filter_complex)
+    # Input options: no more early inputs needed
     video_input_options = []
 
     skip_opts = [] if skip_seconds <= 0.0 else ["-ss", str(skip_seconds)]  # Output-side seek
