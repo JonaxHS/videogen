@@ -6,6 +6,7 @@ Output format: 9:16 vertical (1080x1920) at 30fps.
 import os
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
 from typing import List, Dict, Callable, Optional
 
@@ -92,20 +93,22 @@ SUBTITLE_STYLES = {
         "extra": ":shadowx=2:shadowy=2:shadowcolor=black@0.9"
     },
     "reel-impact": {
-        "fontsize": 70,
+        "fontsize": 74,
         "fontcolor": "white",
         "boxcolor": "none",
         "position": "bottom",
-        "line_spacing": 9,
+        "y_offset": 190,
+        "line_spacing": 6,
         "boxborderw": 0,
-        "borderw": 7,
+        "borderw": 9,
         "bordercolor": "black",
         "mode": "progressive",
-        "max_steps": 8,
+        "max_steps": 14,
         "force_progressive": True,
-        "wrap_chars": 28,
+        "font": "DejaVu Sans Bold",
+        "wrap_chars": 22,
         "max_lines": 2,
-        "extra": ":shadowx=1:shadowy=1:shadowcolor=black@0.6"
+        "extra": ""
     },
 }
 
@@ -280,9 +283,11 @@ def _compose_segment(
         boxborderw = style["boxborderw"]
         borderw = int(style.get("borderw", 0) or 0)
         bordercolor = str(style.get("bordercolor", "black"))
+        font_name = str(style.get("font", "Sans"))
         mode = str(style.get("mode", "static"))
         max_steps = int(style.get("max_steps", 4) or 4)  # Limit to 4 progressive steps max (VPS stability)
         extra = style["extra"]
+        y_offset = int(style.get("y_offset", 120) or 120)
 
         # Calculate Y position based on position parameter
         if position == "top":
@@ -290,7 +295,7 @@ def _compose_segment(
         elif position == "center":
             y_pos = "(h-text_h)/2"
         else:  # bottom (default)
-            y_pos = "h-text_h-120"
+            y_pos = f"h-text_h-{y_offset}"
 
         # Build drawtext filter(s)
         use_box = boxborderw > 0 and str(boxcolor).strip().lower() not in {"", "transparent", "none"}
@@ -312,6 +317,7 @@ def _compose_segment(
                 line_spacing=line_spacing,
                 borderw=borderw,
                 bordercolor=bordercolor,
+                font_name=font_name,
                 extra=extra,
                 max_steps=max_steps,
                 wrap_chars=wrap_chars,
@@ -336,7 +342,7 @@ def _compose_segment(
                 "x=(w-text_w)/2:",
                 f"y={y_pos}:",
                 f"line_spacing={line_spacing}:",
-                "font=Sans:",
+                f"font={font_name}:",
                 "fix_bounds=true",
                 f"{extra}",
             ])
@@ -583,6 +589,7 @@ def _build_progressive_drawtext_filter(
     line_spacing: int,
     borderw: int,
     bordercolor: str,
+    font_name: str,
     extra: str,
     max_steps: int,
     wrap_chars: int,
@@ -601,7 +608,7 @@ def _build_progressive_drawtext_filter(
             "x=(w-text_w)/2:",
             f"y={y_pos}:",
             f"line_spacing={line_spacing}:",
-            "font=Sans:",
+            f"font={font_name}:",
             "fix_bounds=true",
             f"{extra}",
         ]
@@ -634,7 +641,7 @@ def _build_progressive_drawtext_filter(
             "x=(w-text_w)/2:",
             f"y={y_pos}:",
             f"line_spacing={line_spacing}:",
-            "font=Sans:",
+            f"font={font_name}:",
             "fix_bounds=true:",
             f"enable='between(t,{start_t:.2f},{end_t:.2f})'",
             f"{extra}",
@@ -646,6 +653,8 @@ def _build_progressive_drawtext_filter(
 
 def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> str:
     """Escape text for FFmpeg drawtext filter."""
+    text = unicodedata.normalize("NFKC", text or "")
+    text = "".join(ch for ch in text if ch.isprintable() or ch in {"\n", "\t", " "})
     # Order matters: escape backslash first, then other special chars
     text = text.replace('\\', '\\\\')    # Must be first
     text = text.replace("'", "'\\''")    # Escape single quotes for shell
