@@ -1286,6 +1286,36 @@ def search_video_options_intelligent(
                 if candidate.get("provider") != current_provider and len(limited) < limit:
                     limited.append(candidate)
                     break
+
+    # For scientific scripts, guarantee a minimum NASA/ESA presence so results reflect astronomy context.
+    scientific_domains = []
+    if script_analysis and isinstance(script_analysis, dict):
+        scientific_domains = script_analysis.get("detected_domains") or []
+    if scientific_domains and limited:
+        space_providers = {"nasa", "esa"}
+        min_space_results = 2 if limit >= 4 else 1
+
+        current_space = sum(1 for item in limited if item.get("provider") in space_providers)
+        if current_space < min_space_results:
+            space_candidates = [
+                item for item in ranked
+                if item.get("provider") in space_providers and item.get("url") not in {x.get("url") for x in limited}
+            ]
+
+            for space_item in space_candidates:
+                replace_idx = next(
+                    (
+                        idx for idx in range(len(limited) - 1, -1, -1)
+                        if limited[idx].get("provider") not in space_providers
+                    ),
+                    None,
+                )
+                if replace_idx is None:
+                    break
+                limited[replace_idx] = space_item
+                current_space += 1
+                if current_space >= min_space_results:
+                    break
     
     limited = limited[:limit]
     
