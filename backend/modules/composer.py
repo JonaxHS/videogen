@@ -374,7 +374,9 @@ def _compose_segment(
             "ffmpeg", "-y",
             "-stream_loop", "-1",
             "-i", video_path,
-            "-c", "copy",
+            "-c:v", "libx264", 
+            "-preset", "ultrafast",
+            "-crf", "23",
             "-t", str(target_len),
             preloop_path
         ]
