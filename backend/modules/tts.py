@@ -183,12 +183,12 @@ def _get_whisper_model():
     if _whisper_model is None:
         import whisper
         import platform
-        print("[Whisper] Cargando modelo local 'base' para subtítulos (solo la primera vez)...")
+        print("[Whisper] Cargando modelo local 'tiny' para subtítulos (solo la primera vez) para ahorrar RAM...")
         # Forzamos CPU o mps si es Mac, para mayor compatibilidad
         device = "cpu"
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             device = "cpu" # MPS a veces falla con whisper en macs locales, cpu is safe for base model
-        _whisper_model = whisper.load_model("base", device=device)
+        _whisper_model = whisper.load_model("tiny", device=device)
     return _whisper_model
 
 def _deepgram_generate_sync(text: str, output_path: str, voice_id: str) -> dict:
