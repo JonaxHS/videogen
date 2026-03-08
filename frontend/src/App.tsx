@@ -123,6 +123,7 @@ function VideoReplacementModal({
     segment,
     options,
     loading,
+    scriptText,
     selectedUrl,
     onPick,
     onClose,
@@ -131,6 +132,7 @@ function VideoReplacementModal({
     segment: Segment | null
     options: VideoOption[]
     loading: boolean
+    scriptText: string
     selectedUrl?: string
     onPick: (url: string) => void
     onClose: () => void
@@ -194,6 +196,7 @@ function VideoReplacementModal({
                 const res = await apiPost<VideoOptionsResponse>('/video-options', {
                     keywords: segment.keywords || segment.text,
                     context_text: '',
+                    script_text: scriptText,
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
                     global_search: true,
@@ -221,7 +224,7 @@ function VideoReplacementModal({
         return () => {
             cancelled = true
         }
-    }, [isOpen, segment, selectedProviders, searchSeed, options])
+    }, [isOpen, segment, selectedProviders, searchSeed, options, scriptText])
 
     // Debounced search handler
     const handleSearchInput = (query: string) => {
@@ -245,6 +248,7 @@ function VideoReplacementModal({
                 const res = await apiPost<VideoOptionsResponse>('/video-options', {
                     keywords: query,
                     context_text: '',
+                    script_text: scriptText,
                     min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                     limit: 30,
                     global_search: false,
@@ -274,6 +278,7 @@ function VideoReplacementModal({
             const res = await apiPost<VideoOptionsResponse>('/video-options', {
                 keywords: query,
                 context_text: '',
+                script_text: scriptText,
                 min_duration: segment ? Math.max(3, Math.round(segment.estimated_duration)) : 3,
                 limit: 30,
                 global_search: false,
@@ -1593,6 +1598,7 @@ export default function App() {
                         const res = await apiPost<VideoOptionsResponse>('/video-options', {
                             keywords: seg.keywords,
                             context_text: seg.text,
+                            script_text: script,
                             min_duration: Math.max(3, Math.round(seg.estimated_duration)),
                             limit: 12,
                             global_search: true,
@@ -2120,6 +2126,7 @@ export default function App() {
                 segment={previewingSeg}
                 options={previewingSeg ? videoOptionsBySeg[previewingSeg.id] || [] : []}
                 loading={previewingSeg ? loadingVideosBySeg[previewingSeg.id] || false : false}
+                scriptText={script}
                 selectedUrl={previewingSeg ? selectedVideos[previewingSeg.id] : undefined}
                 onPick={(url) => {
                     if (previewingSeg) {

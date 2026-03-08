@@ -1141,6 +1141,7 @@ def search_video_options_intelligent(
     global_search: bool = False,
     page: int = 1,
     exclude_urls: set[str] | None = None,
+    include_providers: set[str] | None = None,
     search_seed: str = "",
 ) -> list[dict]:
     """
@@ -1177,6 +1178,13 @@ def search_video_options_intelligent(
         keywords,
         script_context=context_text or script_text,
     )
+
+    requested_providers = {p.lower().strip() for p in (include_providers or set()) if str(p).strip()}
+    if requested_providers:
+        preferred_providers = [p for p in preferred_providers if p in requested_providers]
+        if not preferred_providers:
+            preferred_providers = [p for p in ["nasa", "esa", "pexels", "pixabay"] if p in requested_providers]
+
     print(f"[search_intelligent] Preferred providers: {preferred_providers}")
     
     # Build multi-keyword queries for richer search

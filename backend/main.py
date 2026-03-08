@@ -296,6 +296,7 @@ class ScriptGenerationRequest(BaseModel):
 class VideoOptionsRequest(BaseModel):
     keywords: str
     context_text: str = ""
+    script_text: str = ""
     min_duration: int = 5
     limit: int = 8
     global_search: bool = False
@@ -1170,20 +1171,49 @@ def _parse_detailed_reel(text: str) -> dict:
 
 @app.post("/api/video-options")
 def video_options(req: VideoOptionsRequest):
-    options = search_video_options(
-        keywords=req.keywords,
-        pexels_api_key=PEXELS_API_KEY,
-        pixabay_api_key=PIXABAY_API_KEY,
-        context_text=req.context_text,
-        min_duration=max(3, int(req.min_duration)),
-        limit=max(1, min(50, int(req.limit))),
-        global_search=bool(req.global_search),
-        prefer_nasa=bool(req.prefer_nasa),
-        page=max(1, int(req.page)),
-        exclude_urls=set(req.exclude_urls or []),
-        include_providers=set(req.include_providers or []),
-        search_seed=(req.search_seed or "").strip(),
-    )
+    include_providers = set(req.include_providers or [])
+    script_probe = (req.script_text or "").strip()
+    analysis_text = " ".join(part for part in [req.keywords, req.context_text, script_probe] if part).strip()
+
+    detected_domains: list[str] = []
+    if analysis_text:
+        try:
+            detected_domains = script_analyzer.detect_scientific_domains(analysis_text)
+        except Exception as domain_err:
+            print(f"[video_options] Scientific domain detection failed: {domain_err}")
+
+    use_intelligent = len(detected_domains) > 0
+    if use_intelligent:
+        print(f"[video_options] Intelligent mode ON - domains: {detected_domains}")
+        options = search_video_options_intelligent(
+            keywords=req.keywords,
+            pexels_api_key=PEXELS_API_KEY,
+            pixabay_api_key=PIXABAY_API_KEY,
+            context_text=req.context_text,
+            script_text=script_probe or analysis_text,
+            min_duration=max(3, int(req.min_duration)),
+            limit=max(1, min(50, int(req.limit))),
+            global_search=bool(req.global_search),
+            page=max(1, int(req.page)),
+            exclude_urls=set(req.exclude_urls or []),
+            include_providers=include_providers,
+            search_seed=(req.search_seed or "").strip(),
+        )
+    else:
+        options = search_video_options(
+            keywords=req.keywords,
+            pexels_api_key=PEXELS_API_KEY,
+            pixabay_api_key=PIXABAY_API_KEY,
+            context_text=req.context_text,
+            min_duration=max(3, int(req.min_duration)),
+            limit=max(1, min(50, int(req.limit))),
+            global_search=bool(req.global_search),
+            prefer_nasa=bool(req.prefer_nasa),
+            page=max(1, int(req.page)),
+            exclude_urls=set(req.exclude_urls or []),
+            include_providers=include_providers,
+            search_seed=(req.search_seed or "").strip(),
+        )
     return {"options": options}
 
 
@@ -1204,6 +1234,7 @@ def video_options_intelligent(req: VideoOptionsIntelligentRequest):
         limit=max(1, min(50, int(req.limit))),
         page=max(1, int(req.page)),
         exclude_urls=set(req.exclude_urls or []),
+        include_providers={"nasa", "esa", "pexels", "pixabay"},
         search_seed=(req.search_seed or "").strip(),
     )
     return {"options": options}
