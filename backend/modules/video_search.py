@@ -863,15 +863,29 @@ def search_video_options(
             best_by_url[url] = candidate
 
     # Intent guard: when relevance is too low, avoid returning arbitrary clips.
+    # BUT: be lenient with Pexels/Pixabay since they have fewer detailed keywords
     filtered_candidates = []
     for candidate in best_by_url.values():
         relevance = float(candidate.get("relevance", 0.0) or 0.0)
         provider = str(candidate.get("provider", ""))
         threshold = MIN_RELEVANCE_SCORE_GLOBAL if global_search else MIN_RELEVANCE_SCORE
+        
+        # Lower threshold for premium providers to ensure diversity
         if provider in {"nasa", "esa"}:
             threshold = max(0.0, threshold - 0.03)
+        elif provider in {"pexels", "pixabay"}:
+            # Pexels/Pixabay have less metadata, so be more lenient
+            threshold = max(0.0, threshold - 0.08)
+        
         if relevance >= threshold:
             filtered_candidates.append(candidate)
+    
+    print(f"[search_video_options] After relevance filter: {len(filtered_candidates)} candidates passed (was {len(best_by_url)})")
+    provider_breakdown = {}
+    for c in filtered_candidates:
+        p = c.get("provider", "unknown")
+        provider_breakdown[p] = provider_breakdown.get(p, 0) + 1
+    print(f"[search_video_options] Provider breakdown after filter: {provider_breakdown}")
 
     ranking_pool = filtered_candidates if filtered_candidates else list(best_by_url.values())
     
@@ -885,7 +899,7 @@ def search_video_options(
     ranked = sorted(
         ranking_pool,
         key=lambda c: (
-            2 if (prefer_nasa and c.get("provider") in ("nasa", "esa")) else (1 if c.get("provider") in ("nasa", "esa") else 0),
+            1 if c.get("provider") in ("nasa", "esa") else 0,  # Slight boost for NASA/ESA but not dominant
             c.get("score", 0),
         ),
         reverse=True,
