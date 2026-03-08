@@ -1186,6 +1186,10 @@ def search_video_options_intelligent(
             preferred_providers = [p for p in ["nasa", "esa", "pexels", "pixabay"] if p in requested_providers]
 
     print(f"[search_intelligent] Preferred providers: {preferred_providers}")
+
+    scientific_domains = []
+    if script_analysis and isinstance(script_analysis, dict):
+        scientific_domains = script_analysis.get("detected_domains") or []
     
     # Build multi-keyword queries for richer search
     multi_queries = script_analyzer.build_multikeyword_queries(
@@ -1298,9 +1302,6 @@ def search_video_options_intelligent(
     ranked = sorted(unique_candidates, key=lambda c: c.get("score", 0), reverse=True)
     
     # Apply provider-based boost for preferred providers
-    scientific_domains = []
-    if script_analysis and isinstance(script_analysis, dict):
-        scientific_domains = script_analysis.get("detected_domains") or []
 
     reranked = []
     for candidate in ranked:
