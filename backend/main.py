@@ -1091,6 +1091,12 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
     except Exception as preflight_cleanup_err:
         print(f"[TempCleanup] Pre-flight sweep failed: {preflight_cleanup_err}", flush=True)
 
+    # Pre-flight sweep for /app/cache/videos size/age policy.
+    try:
+        _apply_cache_settings_to_video_search(force_cleanup=True)
+    except Exception as cache_preflight_err:
+        print(f"[CacheCleanup] Pre-flight sweep failed: {cache_preflight_err}", flush=True)
+
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -1261,5 +1267,8 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
 
             # Keep temp bounded after each generation as well.
             _cleanup_temp_workspace(active_job_id=None)
+
+            # Keep provider video cache bounded after each generation.
+            _apply_cache_settings_to_video_search(force_cleanup=True)
         except Exception as cleanup_err:
             print(f"[Cleanup] Could not remove temp dir {job_dir}: {cleanup_err}")
