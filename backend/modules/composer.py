@@ -654,8 +654,11 @@ def _build_progressive_drawtext_filter(
             
             display_text = ' '.join(words_to_show) if words_to_show else accumulated_words[-1]
         
-        # Clean and escape for FFmpeg (no line wrapping, just clean text)
-        escaped = _escape_ffmpeg_text(display_text, max_chars=9999, max_lines=0)
+        # Manually wrap text to max_lines by inserting newlines
+        wrapped_text = _manual_wrap_text(display_text, wrap_chars, max_lines)
+        
+        # Clean and escape for FFmpeg
+        escaped = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0)
         phrases.append({
             'text': escaped,
             'start': (word_idx - 1) * time_per_word,
@@ -700,6 +703,41 @@ def _build_progressive_drawtext_filter(
     return ",".join(filters)
 
 
+def _manual_wrap_text(text: str, wrap_chars: int, max_lines: int) -> str:
+    """
+    Manually wrap text by inserting newlines at word boundaries.
+    Returns text with newlines inserted to fit within wrap_chars per line.
+    """
+    words = text.split(' ')
+    lines = []
+    current_line = []
+    current_length = 0
+    
+    for word in words:
+        word_len = len(word)
+        # Check if adding this word would exceed wrap_chars
+        space_needed = 1 if current_line else 0
+        if current_length + space_needed + word_len <= wrap_chars:
+            current_line.append(word)
+            current_length += space_needed + word_len
+        else:
+            # Start new line
+            if current_line:
+                lines.append(' '.join(current_line))
+            current_line = [word]
+            current_length = word_len
+            
+            # Stop if we've reached max_lines
+            if max_lines and len(lines) >= max_lines:
+                break
+    
+    # Add last line if not at limit
+    if current_line and (not max_lines or len(lines) < max_lines):
+        lines.append(' '.join(current_line))
+    
+    return '\n'.join(lines)
+
+
 def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> str:
     """Escape text for FFmpeg drawtext filter."""
     text = unicodedata.normalize("NFKC", text or "")
@@ -719,25 +757,34 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> s
     text = text.replace("\u2026", "...")  # Ellipsis
     
     # Remove categories: So (Other Symbols), Co (Private Use), Cs (Surrogates), Cf (Format)
-    # Keep Spanish punctuation ¿¡ and basic letters/numbers/punctuation
+    # Keep Spanish punctuation ¿¡ and basic letters/numbers/punctuation and newlines
     text = "".join(
         ch for ch in text 
-        if (unicodedata.category(ch)[0] in {"L", "N", "P", "Z", "M"} or ch in {"¿", "¡"})
+        if (unicodedata.category(ch)[0] in {"L", "N", "P", "Z", "M", "C"} or ch in {"¿", "¡", "\n"})
     )
     
-    # Keep only printable characters (excluding newlines)
-    text = "".join(ch for ch in text if ch.isprintable() and ch not in {"\n", "\r"})
+    # Keep only printable characters and newlines
+    text = "".join(ch for ch in text if (ch.isprintable() or ch == "\n") and ch != "\r")
     
-    # Collapse multiple spaces
-    text = re.sub(r' +', ' ', text).strip()
+    # Collapse multiple spaces on same line (preserve newlines)
+    lines = text.split('\n')
+    lines = [re.sub(r' +', ' ', line).strip() for line in lines]
+    text = '\n'.join(lines)
     
-    # Order matters: escape backslash first, then other special chars
+    # Order matters: handle newlines FIRST before other escaping
+    # For FFmpeg drawtext in shell, newline needs special handling
+    text = text.replace('\n', '<<<NL>>>')  # Temporary placeholder
+    
+    # Now escape other special chars
     text = text.replace('\\', '\\\\')    # Must be first
     text = text.replace("'", "'\\''")    # Escape single quotes for shell
     text = text.replace(':', '\\:')      # FFmpeg drawtext uses : as separator
     text = text.replace('%', '\\%')
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
+    
+    # Replace newline placeholder with actual newline (will be preserved in single quotes)
+    text = text.replace('<<<NL>>>', '\n')
     
     return text
 
