@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 import numpy as np
 from datetime import datetime, timedelta
+from . import script_analyzer
 
 PEXELS_API_BASE = "https://api.pexels.com/videos"
 PIXABAY_VIDEO_API = "https://pixabay.com/api/videos/"
@@ -597,6 +598,96 @@ def search_and_download_video_info(
     }
 
 
+def search_and_download_video_info_intelligent(
+    keywords: str,
+    output_path: str,
+    pexels_api_key: str = "",
+    pixabay_api_key: str = "",
+    context_text: str = "",
+    script_text: str = "",
+    min_duration: int = 5,
+    exclude_urls: set[str] | None = None,
+    segment_index: int = 0,
+    used_providers: list[str] | None = None,
+    generation_id: str | None = None,
+) -> dict:
+    """
+    Intelligent video search and download using script analysis.
+    For science/astronomy scripts, uses multi-keyword queries and provider intelligence.
+    Falls back to standard search for non-scientific scripts.
+    """
+    # Generate unique seed for this segment
+    if generation_id:
+        search_seed = hashlib.md5(f"{generation_id}:{segment_index}".encode()).hexdigest()[:8]
+    else:
+        search_seed = hashlib.md5(f"{keywords}:{segment_index}:{context_text[:50]}".encode()).hexdigest()[:8]
+    
+    print(f"[IntelligentSearch Seg {segment_index}] Starting intelligent search for: '{keywords[:30]}...'")
+    
+    # Use intelligent search
+    search_limit = 8  # Slightly larger pool for intelligent selection
+    options = search_video_options_intelligent(
+        keywords=keywords,
+        pexels_api_key=pexels_api_key,
+        pixabay_api_key=pixabay_api_key,
+        context_text=context_text,
+        script_text=script_text,
+        min_duration=min_duration,
+        limit=search_limit,
+        exclude_urls=exclude_urls,
+        search_seed=search_seed,
+    )
+    
+    print(f"[IntelligentSearch Seg {segment_index}] Found {len(options)} options")
+    provider_counts = {}
+    for opt in options:
+        p = opt.get("provider", "unknown")
+        provider_counts[p] = provider_counts.get(p, 0) + 1
+    print(f"[IntelligentSearch Seg {segment_index}] Provider distribution: {provider_counts}")
+    
+    if not options:
+        # Fallback to standard search if intelligent search fails
+        print(f"[IntelligentSearch Seg {segment_index}] No results, falling back to standard search")
+        return search_and_download_video_info(
+            keywords=keywords,
+            output_path=output_path,
+            pexels_api_key=pexels_api_key,
+            pixabay_api_key=pixabay_api_key,
+            context_text=context_text,
+            min_duration=min_duration,
+            exclude_urls=exclude_urls,
+            segment_index=segment_index,
+            used_providers=used_providers,
+            generation_id=generation_id,
+        )
+    
+    # Provider rotation: prefer different provider than recently used
+    used_providers = used_providers or []
+    recent_providers = set(used_providers[-2:])  # Last 2 providers used
+    
+    selected = None
+    for candidate in options:
+        provider = candidate.get("provider", "manual")
+        if provider not in recent_providers:
+            selected = candidate
+            break
+    
+    # Fallback to best option if all are from recent providers
+    if not selected:
+        selected = options[0]
+    
+    print(f"[IntelligentSearch Seg {segment_index}] Recent providers: {recent_providers}")
+    print(f"[IntelligentSearch Seg {segment_index}] Selected: {selected.get('provider')} - {selected.get('url', '')[:80]}")
+    
+    local_path = download_video_from_url(selected["url"], provider_hint=selected.get("provider", "manual"))
+    return {
+        "path": local_path,
+        "provider": selected.get("provider", "manual"),
+        "url": selected.get("url", ""),
+        "skip_seconds": selected.get("skip_seconds", 0.0),
+    }
+
+
 def infer_provider_from_url(url: str) -> str:
     value = (url or "").lower()
     if not value:
@@ -1035,6 +1126,167 @@ def search_video_options(
         p = v.get("provider", "unknown")
         final_providers[p] = final_providers.get(p, 0) + 1
     print(f"[search_video_options] Final result: {len(limited)} videos - providers: {final_providers}")
+    return limited
+
+
+def search_video_options_intelligent(
+    keywords: str,
+    pexels_api_key: str = "",
+    pixabay_api_key: str = "",
+    context_text: str = "",
+    script_text: str = "",  # Full script for intelligent analysis
+    min_duration: int = 5,
+    fallback_keywords: str = "nature landscape",
+    limit: int = 8,
+    global_search: bool = False,
+    page: int = 1,
+    exclude_urls: set[str] | None = None,
+    search_seed: str = "",
+) -> list[dict]:
+    """
+    Intelligent video search for science/astronomy scripts.
+    Uses script analysis to:
+    1. Generate multiple related keywords for richer matching
+    2. Prioritize providers (NASA/ESA for science, Pexels/Pixabay for visual effects)
+    3. Ensure contextual coherence between consecutive segments
+    
+    This is an enhanced version of search_video_options optimized for astronomy/scientific reels.
+    """
+    _cleanup_cache_if_needed()
+    
+    # Analyze script to understand scientific context
+    if script_text:
+        script_analysis = script_analyzer.analyze_script_structure(script_text)
+        print(f"[search_intelligent] Detected themes: {script_analysis['detected_domains']}")
+        print(f"[search_intelligent] Primary theme: {script_analysis['primary_theme']}")
+    else:
+        script_analysis = None
+    
+    # Get intelligent keyword expansion for this segment
+    expansion = script_analyzer.expand_segment_keywords(
+        keywords,
+        script_context=context_text or script_text,
+        detected_domains=script_analysis['detected_domains'] if script_analysis else None,
+    )
+    
+    print(f"[search_intelligent] Primary keywords: {expansion['primary_keywords']}")
+    print(f"[search_intelligent] Secondary keywords: {expansion['secondary_keywords']}")
+    
+    # Get preferred providers for this segment
+    preferred_providers = script_analyzer.get_preferred_providers_for_segment(
+        keywords,
+        script_context=context_text or script_text,
+    )
+    print(f"[search_intelligent] Preferred providers: {preferred_providers}")
+    
+    # Build multi-keyword queries for richer search
+    multi_queries = script_analyzer.build_multikeyword_queries(
+        keywords,
+        script_context=context_text or script_text,
+        num_queries=3,
+    )
+    print(f"[search_intelligent] Multi-queries: {multi_queries}")
+    
+    all_candidates = []
+    exclude_urls = exclude_urls or set()
+    
+    # Search with each keyword expansion
+    for query_idx, expanded_keyword in enumerate(multi_queries):
+        print(f"[search_intelligent] Query {query_idx + 1}/{ len(multi_queries)}: '{expanded_keyword}'")
+        
+        # Reorder providers based on preference
+        providers_config = []
+        for provider_name in preferred_providers:
+            if provider_name == "pexels" and pexels_api_key:
+                providers_config.append(("pexels", pexels_api_key))
+            elif provider_name == "pixabay" and pixabay_api_key:
+                providers_config.append(("pixabay", pixabay_api_key))
+            elif provider_name == "nasa":
+                providers_config.append(("nasa", ""))
+            elif provider_name == "esa":
+                providers_config.append(("esa", ""))
+        
+        # Search each provider
+        for provider_name, provider_key in providers_config:
+            if provider_name == "pexels":
+                results = _search_pexels_candidates(
+                    expanded_keyword, provider_key, min_duration,
+                    per_page=15, page=page
+                )
+                all_candidates.extend(results)
+                print(f"  ✓ Pexels: {len(results)} results")
+            elif provider_name == "pixabay":
+                results = _search_pixabay_candidates(
+                    expanded_keyword, provider_key, min_duration,
+                    per_page=15, page=page
+                )
+                all_candidates.extend(results)
+                print(f"  ✓ Pixabay: {len(results)} results")
+            elif provider_name == "nasa":
+                results = _search_nasa_candidates(
+                    expanded_keyword, min_duration,
+                    per_page=10, page=page, search_seed=search_seed
+                )
+                all_candidates.extend(results)
+                print(f"  ✓ NASA: {len(results)} results")
+            elif provider_name == "esa":
+                results = _search_esa_candidates(
+                    expanded_keyword, min_duration,
+                    per_page=10, page=page, search_seed=search_seed
+                )
+                all_candidates.extend(results)
+                print(f"  ✓ ESA: {len(results)} results")
+        
+        # Early exit if we have enough candidates
+        if len(all_candidates) >= max(20, limit * 3):
+            break
+    
+    # Deduplicate by URL
+    seen_urls = set()
+    unique_candidates = []
+    for candidate in all_candidates:
+        url = candidate.get("url", "")
+        if url not in seen_urls and url not in exclude_urls:
+            seen_urls.add(url)
+            unique_candidates.append(candidate)
+    
+    print(f"[search_intelligent] Total candidates after dedup: {len(unique_candidates)}")
+    
+    # Rank by score (already done by individual search functions)
+    ranked = sorted(unique_candidates, key=lambda c: c.get("score", 0), reverse=True)
+    
+    # Apply provider-based boost for preferred providers
+    reranked = []
+    for candidate in ranked:
+        provider = candidate.get("provider", "")
+        # Boost score slightly if from preferred provider
+        if provider in preferred_providers[:2]:  # Top 2 preferred
+            candidate = dict(candidate)
+            candidate["score"] = candidate.get("score", 0) * 1.05
+        reranked.append(candidate)
+    
+    ranked = sorted(reranked, key=lambda c: c.get("score", 0), reverse=True)
+    
+    # Select final results with provider diversity
+    limited = ranked[:limit]
+    if len(limited) >= 2:
+        # Ensure some provider diversity
+        providers_in_limited = {c.get("provider") for c in limited}
+        if len(providers_in_limited) == 1 and len(ranked) > len(limited):
+            current_provider = list(providers_in_limited)[0]
+            for candidate in ranked[len(limited):]:
+                if candidate.get("provider") != current_provider and len(limited) < limit:
+                    limited.append(candidate)
+                    break
+    
+    limited = limited[:limit]
+    
+    final_providers = {}
+    for v in limited:
+        p = v.get("provider", "unknown")
+        final_providers[p] = final_providers.get(p, 0) + 1
+    
+    print(f"[search_intelligent] Final result: {len(limited)} videos - providers: {final_providers}")
     return limited
 
 

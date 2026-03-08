@@ -23,10 +23,13 @@ from dotenv import load_dotenv, dotenv_values
 from modules.script_parser import parse_script
 from modules.tts import generate_audio_sync, get_available_voices, DEFAULT_VOICE
 from modules import video_search as video_search_module
+from modules import script_analyzer
 from modules.video_search import (
     search_and_download_video,
     search_and_download_video_info,
+    search_and_download_video_info_intelligent,
     search_video_options,
+    search_video_options_intelligent,
     download_video_from_url,
     infer_provider_from_url,
 )
@@ -300,6 +303,18 @@ class VideoOptionsRequest(BaseModel):
     page: int = 1
     exclude_urls: list[str] = Field(default_factory=list)
     include_providers: list[str] = Field(default_factory=list)
+    search_seed: str = ""
+
+
+class VideoOptionsIntelligentRequest(BaseModel):
+    """Request for intelligent video search using script analysis"""
+    keywords: str
+    context_text: str = ""
+    script_text: str = ""  # Full script for intelligent theme analysis
+    min_duration: int = 5
+    limit: int = 8
+    page: int = 1
+    exclude_urls: list[str] = Field(default_factory=list)
     search_seed: str = ""
 
 
@@ -752,6 +767,7 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         show_subtitles=req.show_subtitles,
         subtitle_style=req.subtitle_style,
         selected_videos=req.selected_videos,
+        script_text=req.script,
     )
 
     return GenerateResponse(
@@ -794,6 +810,7 @@ def generate_preview(req: PreviewRequest, background_tasks: BackgroundTasks):
         subtitle_style=req.subtitle_style,
         selected_videos=req.selected_videos,
         preview_only=True,
+        script_text=req.script,
     )
 
     return GenerateResponse(
@@ -1170,6 +1187,28 @@ def video_options(req: VideoOptionsRequest):
     return {"options": options}
 
 
+@app.post("/api/video-options-intelligent")
+def video_options_intelligent(req: VideoOptionsIntelligentRequest):
+    """
+    Intelligent video search for science/astronomy scripts.
+    Uses script analysis to generate contextually relevant multi-keyword searches
+    and intelligently prioritize providers (NASA/ESA for science content).
+    """
+    options = search_video_options_intelligent(
+        keywords=req.keywords,
+        pexels_api_key=PEXELS_API_KEY,
+        pixabay_api_key=PIXABAY_API_KEY,
+        context_text=req.context_text,
+        script_text=req.script_text,
+        min_duration=max(3, int(req.min_duration)),
+        limit=max(1, min(50, int(req.limit))),
+        page=max(1, int(req.page)),
+        exclude_urls=set(req.exclude_urls or []),
+        search_seed=(req.search_seed or "").strip(),
+    )
+    return {"options": options}
+
+
 @app.get("/api/status/{job_id}")
 def status(job_id: str):
     job = jobs.get(job_id)
@@ -1226,7 +1265,7 @@ def download(job_id: str):
 # Generation Worker
 # ─────────────────────────────────────────────
 
-def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, subtitle_style: str = "classic", selected_videos: Optional[Dict[str, str]] = None, preview_only: bool = False):
+def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: str, show_subtitles: bool, subtitle_style: str = "classic", selected_videos: Optional[Dict[str, str]] = None, preview_only: bool = False, script_text: str = ""):
     """Background task: TTS + video search + composition."""
     # Pre-flight sweep to keep /app/cache/temp bounded even after crash/OOM leftovers.
     try:
@@ -1243,6 +1282,17 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
     job = jobs[job_id]
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Detect if script is scientific/astronomy-focused for intelligent search
+    use_intelligent_search = False
+    if script_text:
+        try:
+            script_analysis = script_analyzer.analyze_script_structure(script_text)
+            detected_domains = script_analysis.get("detected_domains", [])
+            use_intelligent_search = len(detected_domains) > 0
+            print(f"[Generation {job_id}] Script analysis: domains={detected_domains}, intelligent_search={use_intelligent_search}", flush=True)
+        except Exception as e:
+            print(f"[Generation {job_id}] Script analysis failed: {e}, using standard search", flush=True)
 
     try:
         def _copy_video_to_job(source_path: str, destination_path: str, source_url: str = "", provider_hint: str = "manual") -> str:
@@ -1322,7 +1372,19 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
                 video_provider = manual_provider
                 selected_video_url = manual_url
             else:
-                auto_video_result = search_and_download_video_info(
+                auto_video_result = search_and_download_video_info_intelligent(
+                    keywords=seg["keywords"],
+                    output_path=str(job_dir / f"video_{i:03d}.mp4"),
+                    pexels_api_key=PEXELS_API_KEY,
+                    pixabay_api_key=PIXABAY_API_KEY,
+                    context_text=seg["text"],
+                    script_text=script_text,
+                    min_duration=max(3, int(audio_duration)),
+                    exclude_urls=used_video_urls,
+                    segment_index=i,
+                    used_providers=used_providers,
+                    generation_id=job_id,
+                ) if use_intelligent_search else search_and_download_video_info(
                     keywords=seg["keywords"],
                     output_path=str(job_dir / f"video_{i:03d}.mp4"),
                     pexels_api_key=PEXELS_API_KEY,
