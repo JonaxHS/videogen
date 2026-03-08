@@ -316,8 +316,13 @@ def _compose_segment(
             ])
             drawtext_filter = "".join(drawtext_parts)
 
+    # loop_filter will be set after video_dur is calculated below - placeholder
+    loop_filter = ""  # Will be set after needs_loop is determined
+
+    if show_subtitles and drawtext_filter:
         filter_complex = (
             f"[0:v]"
+            f"{loop_filter}"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
             f"setsar=1,"
@@ -330,6 +335,7 @@ def _compose_segment(
     else:
         filter_complex = (
             f"[0:v]"
+            f"{loop_filter}"
             f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
             f"setsar=1,"
@@ -354,17 +360,42 @@ def _compose_segment(
     if skip_seconds >= video_dur - 0.5:
         skip_seconds = 0.0  # Don't skip if video is too short to survive the trim
 
-    # Build video input options. 
-    # IMPORTANT: -stream_loop MUST come before -i, but -ss must come AFTER the maps (output-side seek)
-    # Placing -ss before -i with -stream_loop causes FFmpeg to seek the raw file BEFORE the loop
-    # activates, hitting EOF instantly when video is shorter than skip_seconds (e.g. 5s clip, 12s NASA skip).
+    # Determine if video needs looping (shorter than what we need to output)
     needs_loop = (video_dur <= 0) or (video_dur < (audio_duration + skip_seconds))
-    video_input_options = []
-    if needs_loop:
-        # -fflags +genpts prevents frame=0 dropping from reset timestamps in loops
-        video_input_options.extend(["-stream_loop", "-1", "-fflags", "+genpts"])
 
-    skip_opts = [] if skip_seconds <= 0.0 else ["-ss", str(skip_seconds)]  # Output-side seek (loop already active)
+    # Now that we know needs_loop, update loop_filter and rebuild filter_complex with it
+    loop_filter = "loop=loop=-1:size=32767:start=0," if needs_loop else ""
+
+    # Rebuild filter_complex with the correct loop_filter
+    drawtext_filter_local = drawtext_filter if show_subtitles else ""
+    if show_subtitles and drawtext_filter_local:
+        filter_complex = (
+            f"[0:v]"
+            f"{loop_filter}"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
+            f"setsar=1,"
+            f"fps={FPS}"
+            f"[scaled];"
+            f"[scaled]"
+            f"{drawtext_filter_local}"
+            f"[out]"
+        )
+    else:
+        filter_complex = (
+            f"[0:v]"
+            f"{loop_filter}"
+            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
+            f"setsar=1,"
+            f"fps={FPS}"
+            f"[out]"
+        )
+
+    # Input options: no more -stream_loop (replaced by loop filter in filter_complex)
+    video_input_options = []
+
+    skip_opts = [] if skip_seconds <= 0.0 else ["-ss", str(skip_seconds)]  # Output-side seek
 
 
     if audio_path:
@@ -418,6 +449,7 @@ def _compose_segment(
                 # Rebuild command without subtitles
                 fallback_filter = (
                     f"[0:v]"
+                    f"{loop_filter}"
                     f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
                     f"crop='min(iw,{OUTPUT_WIDTH})':'min(ih,{OUTPUT_HEIGHT})':'(iw-min(iw,{OUTPUT_WIDTH}))/2':'(ih-min(ih,{OUTPUT_HEIGHT}))/2',"
                     f"setsar=1,"
