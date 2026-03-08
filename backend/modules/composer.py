@@ -100,6 +100,11 @@ SUBTITLE_STYLES = {
         "boxborderw": 0,
         "borderw": 7,
         "bordercolor": "black",
+        "mode": "progressive",
+        "max_steps": 8,
+        "force_progressive": True,
+        "wrap_chars": 28,
+        "max_lines": 2,
         "extra": ":shadowx=1:shadowy=1:shadowcolor=black@0.6"
     },
 }
@@ -255,14 +260,18 @@ def _compose_segment(
     # 1. Scale and crop to 9:16 (cover mode, no black bars)
     # 2. Add subtitle text only if show_subtitles=True
     if show_subtitles:
-        safe_text = _escape_ffmpeg_text(text)
+        style = SUBTITLE_STYLES.get(subtitle_style, SUBTITLE_STYLES[DEFAULT_SUBTITLE_STYLE])
+        wrap_chars = int(style.get("wrap_chars", 40) or 40)
+        max_lines = int(style.get("max_lines", 3) or 3)
+        force_progressive = bool(style.get("force_progressive", False))
+
+        safe_text = _escape_ffmpeg_text(text, max_chars=wrap_chars, max_lines=max_lines)
 
         if len(text) > 120:
             words = text.split()
-            safe_text = _escape_ffmpeg_text(' '.join(words[:20]) + '...')
+            safe_text = _escape_ffmpeg_text(' '.join(words[:20]) + '...', max_chars=wrap_chars, max_lines=max_lines)
 
         # Get style config
-        style = SUBTITLE_STYLES.get(subtitle_style, SUBTITLE_STYLES[DEFAULT_SUBTITLE_STYLE])
         fontsize = style["fontsize"]
         fontcolor = style["fontcolor"]
         boxcolor = style["boxcolor"]
@@ -288,7 +297,7 @@ def _compose_segment(
 
         # For texts with many words, use simple mode to avoid too many drawtext filters
         words = [w for w in (text or "").split() if w.strip()]
-        use_simple_mode = len(words) > 12
+        use_simple_mode = len(words) > 12 and not force_progressive
         if use_simple_mode:
             print(f"[Composer] Text has {len(words)} words: using simple mode (static subtitle)")
 
@@ -305,6 +314,8 @@ def _compose_segment(
                 bordercolor=bordercolor,
                 extra=extra,
                 max_steps=max_steps,
+                wrap_chars=wrap_chars,
+                max_lines=max_lines,
             )
         else:
             drawtext_parts = [
@@ -574,6 +585,8 @@ def _build_progressive_drawtext_filter(
     bordercolor: str,
     extra: str,
     max_steps: int,
+    wrap_chars: int,
+    max_lines: int,
 ) -> str:
     words = [w for w in (text or "").split() if w.strip()]
     if len(words) <= 1 or audio_duration <= 0.2:
@@ -600,7 +613,7 @@ def _build_progressive_drawtext_filter(
     for end in range(group_size, len(words) + group_size, group_size):
         phrase = " ".join(words[: min(end, len(words))]).strip()
         if phrase:
-            phrases.append(_escape_ffmpeg_text(phrase))
+            phrases.append(_escape_ffmpeg_text(phrase, max_chars=wrap_chars, max_lines=max_lines))
     if not phrases:
         phrases = [safe_text]
 
@@ -631,7 +644,7 @@ def _build_progressive_drawtext_filter(
     return ",".join(filters)
 
 
-def _escape_ffmpeg_text(text: str) -> str:
+def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3) -> str:
     """Escape text for FFmpeg drawtext filter."""
     # Order matters: escape backslash first, then other special chars
     text = text.replace('\\', '\\\\')    # Must be first
@@ -641,11 +654,10 @@ def _escape_ffmpeg_text(text: str) -> str:
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
     text = re.sub(r'\s+', ' ', text).strip()
-    # Word wrap: insert newline every ~40 chars at word boundary
-    return _word_wrap(text, 40)
+    return _word_wrap(text, max_chars=max_chars, max_lines=max_lines)
 
 
-def _word_wrap(text: str, max_chars: int) -> str:
+def _word_wrap(text: str, max_chars: int, max_lines: int = 0) -> str:
     """Insert '\\n' every max_chars characters at word boundaries."""
     words = text.split(' ')
     lines = []
@@ -663,6 +675,13 @@ def _word_wrap(text: str, max_chars: int) -> str:
 
     if current:
         lines.append(' '.join(current))
+
+    if max_lines and len(lines) > max_lines:
+        lines = lines[:max_lines]
+        if lines:
+            last = lines[-1].rstrip()
+            if not last.endswith('...'):
+                lines[-1] = (last[:-3].rstrip() + '...') if len(last) > 3 else (last + '...')
 
     return '\n'.join(lines)
 
