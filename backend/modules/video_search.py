@@ -1248,6 +1248,40 @@ def search_video_options_intelligent(
         # Early exit if we have enough candidates
         if len(all_candidates) >= max(20, limit * 3):
             break
+
+    # Scientific scripts often need authoritative space footage; add supplemental NASA/ESA pulls.
+    if scientific_domains:
+        supplemental_queries = [
+            "einstein relativity spacetime",
+            "time dilation gravity orbit",
+            "black hole event horizon",
+            "nasa earth orbit satellite",
+            "deep space galaxy nebula",
+        ]
+        prefer_nasa = "nasa" in preferred_providers
+        prefer_esa = "esa" in preferred_providers
+
+        for extra_query in supplemental_queries:
+            if prefer_nasa:
+                all_candidates.extend(
+                    _search_nasa_candidates(
+                        extra_query,
+                        min_duration,
+                        per_page=12,
+                        page=page,
+                        search_seed=search_seed,
+                    )
+                )
+            if prefer_esa:
+                all_candidates.extend(
+                    _search_esa_candidates(
+                        extra_query,
+                        min_duration,
+                        per_page=10,
+                        page=page,
+                        search_seed=search_seed,
+                    )
+                )
     
     # Deduplicate by URL
     seen_urls = set()
