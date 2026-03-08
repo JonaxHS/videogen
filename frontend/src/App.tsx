@@ -1592,6 +1592,43 @@ export default function App() {
 
                 const videosBySegId: Record<number, VideoOption[]> = {}
                 const usedPreviewUrls = new Set<string>(Object.values(selectedVideos || {}))
+                const preselectedBySeg: Record<number, string> = {}
+                const providerUsage: Record<string, number> = {
+                    nasa: 0,
+                    esa: 0,
+                    pexels: 0,
+                    pixabay: 0,
+                }
+
+                const isScientificScript = /\b(relatividad|agujero\s*negro|gravedad|órbita|órbita|orbita|einstein|muones?|galaxia|universo|espacio|sat[eé]lites?|dilataci[oó]n|tiempo)\b/i.test(script)
+                const providerPriority = isScientificScript
+                    ? ['nasa', 'esa', 'pexels', 'pixabay']
+                    : ['pexels', 'pixabay', 'nasa', 'esa']
+
+                const pickDefaultOption = (options: VideoOption[]): VideoOption | null => {
+                    if (!options.length) return null
+
+                    let bestOption: VideoOption | null = null
+                    let bestScore = Number.POSITIVE_INFINITY
+
+                    for (const option of options.slice(0, 10)) {
+                        if (!option?.url) continue
+
+                        const provider = (option.provider || '').toLowerCase()
+                        const priorityIdx = providerPriority.indexOf(provider)
+                        const priorityScore = priorityIdx >= 0 ? priorityIdx : providerPriority.length + 1
+                        const usagePenalty = (providerUsage[provider] || 0) * 2
+                        const duplicatePenalty = usedPreviewUrls.has(option.url) ? 6 : 0
+                        const score = priorityScore + usagePenalty + duplicatePenalty
+
+                        if (score < bestScore) {
+                            bestScore = score
+                            bestOption = option
+                        }
+                    }
+
+                    return bestOption || options[0] || null
+                }
 
                 for (const seg of newSegs) {
                     try {
@@ -1609,10 +1646,12 @@ export default function App() {
                         const options = res.options || []
                         videosBySegId[seg.id] = options
 
-                        for (const candidate of options.slice(0, 3)) {
-                            if (candidate?.url) {
-                                usedPreviewUrls.add(candidate.url)
-                            }
+                        const picked = pickDefaultOption(options)
+                        if (picked?.url) {
+                            preselectedBySeg[seg.id] = picked.url
+                            usedPreviewUrls.add(picked.url)
+                            const provider = (picked.provider || '').toLowerCase()
+                            providerUsage[provider] = (providerUsage[provider] || 0) + 1
                         }
                     } catch {
                         videosBySegId[seg.id] = []
@@ -1621,12 +1660,12 @@ export default function App() {
                     }
                 }
 
-                // Auto-select the first video option for each segment if not already selected
+                // Auto-select balanced defaults (provider-diverse + science-prioritized)
                 setSelectedVideos(prev => {
                     const updated = { ...prev }
                     for (const seg of newSegs) {
-                        if (!updated[seg.id] && videosBySegId[seg.id]?.length > 0) {
-                            updated[seg.id] = videosBySegId[seg.id][0].url
+                        if (!updated[seg.id] && preselectedBySeg[seg.id]) {
+                            updated[seg.id] = preselectedBySeg[seg.id]
                         }
                     }
                     return updated
