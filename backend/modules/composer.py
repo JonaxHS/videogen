@@ -367,22 +367,44 @@ def _compose_segment(
     # This prevents the known FFmpeg bug where `-stream_loop -1` combined with H264 MP4s
     # and a second audio stream silently outputs 0 frames.
     if needs_loop:
+        import math
         preloop_path = os.path.join(TEMP_SEG_DIR, f"preloop_{os.path.basename(video_path)}")
-        # Fast copy of the repeated stream up to the needed duration
+        list_txt_path = os.path.join(TEMP_SEG_DIR, f"list_{os.path.basename(video_path)}.txt")
+        
         target_len = audio_duration + skip_seconds
+        
+        # Calculate how many times we need to loop the video
+        safe_dur = video_dur if video_dur > 0 else 1.0
+        repeat_count = math.ceil(target_len / safe_dur) + 1
+        
+        # Create a concat list file
+        with open(list_txt_path, "w") as f:
+            for _ in range(repeat_count):
+                f.write(f"file '{os.path.abspath(video_path)}'\n")
+                
+        # Use concat demuxer which is much more robust than stream_loop
         preloop_cmd = [
             "ffmpeg", "-y",
-            "-stream_loop", "-1",
-            "-i", video_path,
-            "-c:v", "libx264", 
-            "-preset", "ultrafast",
-            "-crf", "23",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", list_txt_path,
+            "-c", "copy",
             "-t", str(target_len),
             preloop_path
         ]
-        print(f"[Composer] Pre-looping short video to {target_len}s...")
-        subprocess.run(preloop_cmd, capture_output=True)
-        video_path = preloop_path  # Use the pre-looped file for the main composition
+        print(f"[Composer] Pre-looping short video to {target_len}s via concat ({repeat_count}x)...")
+        res_preloop = subprocess.run(preloop_cmd, capture_output=True, text=True)
+        if res_preloop.returncode != 0:
+            print(f"[Composer] WARNING: Preloop failed. FFmpeg output:\n{res_preloop.stderr[-1000:]}")
+            # Fallback to original path if preloop fails (will likely 0-frame but avoids crash)
+        else:
+            video_path = preloop_path  # Use the pre-looped file for the main composition
+        
+        # Cleanup the list text file
+        try:
+            os.remove(list_txt_path)
+        except OSError:
+            pass
 
     # Rebuild filter_complex without loop_filter logic (preloop handles it)
     drawtext_filter_local = drawtext_filter if show_subtitles else ""
