@@ -368,8 +368,9 @@ def _compose_segment(
     # and a second audio stream silently outputs 0 frames.
     if needs_loop:
         import math
-        preloop_path = os.path.join(TEMP_SEG_DIR, f"preloop_{os.path.basename(video_path)}")
-        list_txt_path = os.path.join(TEMP_SEG_DIR, f"list_{os.path.basename(video_path)}.txt")
+        temp_dir_local = os.path.dirname(output_path)
+        preloop_path = os.path.join(temp_dir_local, f"preloop_{os.path.basename(video_path)}")
+        list_txt_path = os.path.join(temp_dir_local, f"list_{os.path.basename(video_path)}.txt")
         
         target_len = audio_duration + skip_seconds
         
@@ -440,7 +441,8 @@ def _compose_segment(
     if audio_path:
         cmd = [
             "ffmpeg", "-y",
-            *video_input_options,          # Loop args BEFORE -i (activates the loop)
+            *skip_opts,                   # Input-side seek for the video
+            *video_input_options,          # Loop args BEFORE -i (if any remain)
             "-i", video_path,            # Input 0: video
             "-i", audio_path,            # Input 1: TTS audio
             "-filter_complex", filter_complex,
@@ -452,12 +454,12 @@ def _compose_segment(
             "-c:a", "aac",
             "-b:a", "128k",
             "-t", str(audio_duration),   # Trim to target duration
-            *skip_opts,                   # Output-side seek: skips intro AFTER loop is active
             output_path
         ]
     else:
         cmd = [
             "ffmpeg", "-y",
+            *skip_opts,                   # Input-side seek for the video
             *video_input_options,
             "-i", video_path,
             "-filter_complex", filter_complex,
@@ -467,7 +469,6 @@ def _compose_segment(
             "-crf", "23",
             "-an",
             "-t", str(audio_duration),
-            *skip_opts,                   # Output-side seek
             output_path
         ]
 
