@@ -5,6 +5,8 @@ Handles script parsing, TTS generation, video search, and composition.
 import os
 import uuid
 import asyncio
+import threading
+import time
 import requests
 import shutil
 from pathlib import Path
@@ -60,6 +62,7 @@ CORS_ORIGINS = [
 OUTPUT_DIR = Path("/app/output")
 CACHE_DIR = Path("/app/cache")
 TEMP_DIR = Path("/app/cache/temp")
+JOB_RETENTION_SECONDS = max(10, int(os.getenv("JOB_RETENTION_SECONDS", "120")))
 
 for d in [OUTPUT_DIR, CACHE_DIR, TEMP_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -188,6 +191,34 @@ app.add_middleware(
 # In-memory job store: job_id -> status dict
 jobs: Dict[str, Dict[str, Any]] = {}
 executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _expire_job_artifacts(job_id: str) -> None:
+    """Delete finished job output and remove job metadata after retention window."""
+    job = jobs.get(job_id)
+    if not job:
+        return
+
+    # Only expire completed jobs; keep queued/running/error for troubleshooting.
+    if job.get("status") != "done":
+        return
+
+    output_path = job.get("output_path")
+    try:
+        if output_path and Path(output_path).exists():
+            Path(output_path).unlink(missing_ok=True)
+    except Exception as cleanup_err:
+        print(f"[JobExpiry] Could not delete output for {job_id}: {cleanup_err}", flush=True)
+
+    jobs.pop(job_id, None)
+    print(f"[JobExpiry] Expired job {job_id} and removed artifacts", flush=True)
+
+
+def _schedule_job_expiry(job_id: str) -> None:
+    """Schedule automatic cleanup for a completed job."""
+    timer = threading.Timer(JOB_RETENTION_SECONDS, _expire_job_artifacts, args=(job_id,))
+    timer.daemon = True
+    timer.start()
 
 # ─────────────────────────────────────────────
 # Request / Response Models
@@ -597,6 +628,7 @@ def generate(req: GenerateRequest, background_tasks: BackgroundTasks):
         "segments": segments,
         "error": None,
         "output_path": None,
+        "retention_seconds": JOB_RETENTION_SECONDS,
     }
 
     # Run generation in background
@@ -638,6 +670,7 @@ def generate_preview(req: PreviewRequest, background_tasks: BackgroundTasks):
         "error": None,
         "output_path": None,
         "preview_only": True,
+        "retention_seconds": JOB_RETENTION_SECONDS,
     }
 
     background_tasks.add_task(
@@ -1251,6 +1284,9 @@ def run_generation(job_id: str, segments: list, voice: str, rate: str, pitch: st
         job["progress"] = 100
         job["message"] = "¡Previsualización generada!" if preview_only else "¡Video generado con éxito!"
         job["output_path"] = output_path
+        job["expires_at"] = int(time.time()) + JOB_RETENTION_SECONDS
+
+        _schedule_job_expiry(job_id)
 
     except Exception as e:
         job["status"] = "error"
