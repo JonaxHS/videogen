@@ -295,7 +295,10 @@ def _compose_segment(
         bordercolor = str(style.get("bordercolor", "black"))
         font_name = str(style.get("font", "Sans"))
         mode = str(style.get("mode", "static"))
-        max_steps = int(style.get("max_steps", 4) or 4)  # Limit to 4 progressive steps max (VPS stability)
+        if style.get("force_progressive"):
+            mode = "progressive"
+            
+        max_steps = int(style.get("max_steps", 4) or 4)
         extra = style["extra"]
         extra_font_style = str(style.get("extra_font_style", ""))
         y_offset = int(style.get("y_offset", 120) or 120)
@@ -805,18 +808,20 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3, for_
     for code in range(0x2500, 0x2600):
         text = text.replace(chr(code), " ")
     
-    # Keep only printable characters and newlines
-    text = "".join(ch for ch in text if (ch.isprintable() or ch == "\n") and ch != "\r")
-    
-    # Collapse multiple spaces on same line
-    lines = text.split('\n')
-    lines = [re.sub(r' +', ' ', line).strip() for line in lines]
-    text = '\n'.join(lines)
-    
     # VERY RESTRICTIVE FILTERING (applied AFTER normalization)
     # Only keep Alphanumeric, Standard Punctuation, and basic Spanish chars
-    allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789áéíóúÁÉÍÓÚñÑüÜ¿¡ ,.!?;:()-'\"\n")
-    text = "".join(ch for ch in text if ch in allowed_chars)
+    # We include \u00a0 (non-breaking space) and convert it to regular space later if needed,
+    # but here we just ensure it's not stripped.
+    allowed_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789áéíóúÁÉÍÓÚñÑüÜ¿¡ ,.!?;:()-'\"\n\u00a0"
+    
+    # Replace anything NOT in allowed_chars with a space instead of removing it
+    text = "".join(ch if ch in allowed_chars else " " for ch in text)
+    
+    # Replace non-breaking spaces with regular spaces
+    text = text.replace("\u00a0", " ")
+    
+    # Collapse multiple spaces (optional, but good for cleanliness)
+    text = re.sub(r' +', ' ', text)
     
     if for_textfile:
         return text
