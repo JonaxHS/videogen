@@ -728,10 +728,10 @@ def _build_progressive_drawtext_filter(
     stable_y_pos = str(y_pos).replace("text_h", str(fixed_text_h))
 
     for phrase_data in phrases:
-        # Subtract a tiny buffer from end_t to ENSURE this filter turns off 
-        # before the next one starts. Completely avoids overlapping pixels.
+        # Subtract a 0.1s (100ms) buffer from end_t to ENSURE this filter turns off 
+        # before the next one starts. Completely avoids overlapping pixels or jitter.
         start_t_safe = phrase_data['start']
-        end_t_safe = max(start_t_safe + 0.01, phrase_data['end'] - 0.005)
+        end_t_safe = max(start_t_safe + 0.05, phrase_data['end'] - 0.1)
         
         for i, line in enumerate(phrase_data['lines']):
             if not line.strip(): continue 
@@ -743,6 +743,8 @@ def _build_progressive_drawtext_filter(
             full_font = f"{font_name}{extra_font_style}"
             
             # Construct drawtext filter parts
+            # Stability Fix: Use fixed left alignment (w*0.1) instead of centered.
+            # Centering causes text to "jump" as the line length changes.
             parts = [
                 f"text='{line}'",
                 f"fontcolor={fontcolor}",
@@ -750,7 +752,7 @@ def _build_progressive_drawtext_filter(
                 "box=0",
                 f"borderw={max(0, int(borderw))}",
                 f"bordercolor={bordercolor}",
-                "x=(w-text_w)/2",
+                "x=w*0.1",
                 f"y={line_y}",
                 f"font='{full_font}'",
                 "fix_bounds=true",
@@ -796,53 +798,37 @@ def _manual_wrap_text(text: str, wrap_chars: int, max_lines: int) -> str:
 
 def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3, for_textfile: bool = False) -> str:
     """Escape text for FFmpeg drawtext filter."""
-    text = unicodedata.normalize("NFKC", text or "")
+    # Use NFC normalization to keep 'ñ' and accented chars as single codepoints
+    text = unicodedata.normalize("NFC", text or "")
     
-    # Remove ALL box/block drawing characters (U+2500-U+257F)
-    # and geometric shapes (U+25A0-U+25FF)
+    # Remove ALL box/block drawing characters and problematic symbols
     for code in range(0x2500, 0x2600):
         text = text.replace(chr(code), " ")
-    
-    # Remove specific problematic characters
-    text = text.replace("□", " ").replace("�", " ")
-    text = text.replace("■", " ").replace("▪", " ").replace("▫", " ")
-    text = text.replace("\u200b", " ").replace("\ufeff", " ")
-    text = text.replace("\u2018", "'").replace("\u2019", "'")  # Smart quotes
-    text = text.replace("\u201c", '"').replace("\u201d", '"')
-    text = text.replace("\u2013", "-").replace("\u2014", "-")  # En/em dashes
-    text = text.replace("\u2026", "...")  # Ellipsis
-    
-    # Remove categories: So (Other Symbols), Co (Private Use), Cs (Surrogates), Cf (Format)
-    # Keep Spanish punctuation ¿¡ and basic letters/numbers/punctuation and newlines
-    text = "".join(
-        ch for ch in text 
-        if (unicodedata.category(ch)[0] in {"L", "N", "P", "Z", "M", "C"} or ch in {"¿", "¡", "\n"})
-    )
     
     # Keep only printable characters and newlines
     text = "".join(ch for ch in text if (ch.isprintable() or ch == "\n") and ch != "\r")
     
-    # Collapse multiple spaces on same line (preserve newlines)
+    # Collapse multiple spaces on same line
     lines = text.split('\n')
     lines = [re.sub(r' +', ' ', line).strip() for line in lines]
     text = '\n'.join(lines)
     
-    # VERY RESTRICTIVE FILTERING
-    # Only keep Alphanumeric, Standard Punctuation, and common Spanish chars
+    # VERY RESTRICTIVE FILTERING (applied AFTER normalization)
+    # Only keep Alphanumeric, Standard Punctuation, and basic Spanish chars
     allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789áéíóúÁÉÍÓÚñÑüÜ¿¡ ,.!?;:()-'\"\n")
     text = "".join(ch for ch in text if ch in allowed_chars)
     
+    if for_textfile:
+        return text
+    
     # Correct FFmpeg Escaping
-    # 1. Backslashes
+    # colons and single quotes MUST be escaped individually
     text = text.replace('\\', '\\\\')
-    # 2. Single quotes (must be escaped for the filter argument)
     text = text.replace("'", "\\'")
-    # 3. Colons (used as arg separator)
     text = text.replace(':', '\\:')
-    # 4. Percent signs (used for expansion)
     text = text.replace('%', '\\%')
     
-    return text.strip()
+    return text.strip() or " "
 
 
 def _word_wrap(text: str, max_chars: int, max_lines: int = 0) -> str:
