@@ -720,25 +720,29 @@ def _build_progressive_drawtext_filter(
             sampled[i]['end'] = sampled[i+1]['start']
         phrases = sampled[:max_steps]
 
-    filters = []
-    
     # Stability fix: If y_pos depends on (h-text_h), text_h changes as words appear!
     # We replace text_h with a fixed estimate based on max_lines to prevent Jumping.
-    fixed_text_h = (fontsize * max_lines) + (line_spacing * (max_lines - 1))
+    # We use a standard line height estimate.
+    line_h = fontsize + line_spacing
+    fixed_text_h = line_h * max_lines
     stable_y_pos = str(y_pos).replace("text_h", str(fixed_text_h))
 
     for phrase_data in phrases:
+        # Subtract a tiny buffer from end_t to ENSURE this filter turns off 
+        # before the next one starts. Completely avoids overlapping pixels.
+        start_t_safe = phrase_data['start']
+        end_t_safe = max(start_t_safe + 0.01, phrase_data['end'] - 0.005)
+        
         for i, line in enumerate(phrase_data['lines']):
             if not line.strip(): continue 
             
             # Use stable_y_pos so the first line is always at the same height
-            line_y = f"({stable_y_pos}) + {i} * ({fontsize} + {line_spacing})"
+            line_y = f"({stable_y_pos}) + {i} * {line_h}"
             
-            # Combine font name and extra style (e.g. DejaVu Sans + :style=Bold)
+            # Combine font name and extra style
             full_font = f"{font_name}{extra_font_style}"
             
             # Construct drawtext filter parts
-            # IMPORTANT: No colons at start/end of parts, joined with : later
             parts = [
                 f"text='{line}'",
                 f"fontcolor={fontcolor}",
@@ -750,13 +754,12 @@ def _build_progressive_drawtext_filter(
                 f"y={line_y}",
                 f"font='{full_font}'",
                 "fix_bounds=true",
-                f"enable='gte(t,{phrase_data['start']:.4f})*lt(t,{phrase_data['end']:.4f})'"
+                f"enable='gte(t,{start_t_safe:.4f})*lt(t,{end_t_safe:.4f})'"
             ]
             
-            # Add extra parameters from style (should already start with :)
             filter_str = "drawtext=" + ":".join(parts)
             if extra:
-                filter_str += extra # extra usually starts with :
+                filter_str += extra
                 
             filters.append(filter_str)
 
@@ -824,21 +827,22 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3, for_
     lines = [re.sub(r' +', ' ', line).strip() for line in lines]
     text = '\n'.join(lines)
     
-    if for_textfile:
-        return text
+    # VERY RESTRICTIVE FILTERING
+    # Only keep Alphanumeric, Standard Punctuation, and common Spanish chars
+    allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789áéíóúÁÉÍÓÚñÑüÜ¿¡ ,.!?;:()-'\"\n")
+    text = "".join(ch for ch in text if ch in allowed_chars)
     
-    # FFmpeg Drawtext Escaping (NOT shell escaping)
-    # 1. Backslashes must be escaped FIRST
+    # Correct FFmpeg Escaping
+    # 1. Backslashes
     text = text.replace('\\', '\\\\')
-    # 2. Single quotes must be escaped with a backslash for FFmpeg's parser
-    # if the text is wrapped in single quotes: text='...'
+    # 2. Single quotes (must be escaped for the filter argument)
     text = text.replace("'", "\\'")
-    # 3. Colons are special in drawtext filters
+    # 3. Colons (used as arg separator)
     text = text.replace(':', '\\:')
-    # 4. Percent signs can trigger expansion
+    # 4. Percent signs (used for expansion)
     text = text.replace('%', '\\%')
     
-    return text
+    return text.strip()
 
 
 def _word_wrap(text: str, max_chars: int, max_lines: int = 0) -> str:
