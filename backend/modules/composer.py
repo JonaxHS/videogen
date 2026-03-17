@@ -107,7 +107,7 @@ SUBTITLE_STYLES = {
         "force_progressive": True,
         "font": "DejaVu Sans Bold",
         "wrap_chars": 24,
-        "max_lines": 3,
+        "max_lines": 2,
         "extra": ":shadowx=4:shadowy=4:shadowcolor=black@0.6"
     },
 }
@@ -651,74 +651,72 @@ def _build_progressive_drawtext_filter(
             filters.append("".join(parts))
         return ",".join(filters)
 
-    # Strategy: Show words progressively (accumulating), word by word
-    # When accumulated text exceeds max_lines, use sliding window (show only last words that fit)
+    # Strategy: Show words progressively (accumulating) within "pages".
+    # When a group of words fills the allowed lines (max_lines), we finish that "page"
+    # and start a fresh one, clearing the previous text.
     
-    # Calculate time per word for synchronization
     time_per_word = audio_duration / len(words)
+    pages = []
+    current_page_words = []
     
+    # 1. Group words into pages based on the line limit
+    for word in words:
+        test_page = current_page_words + [word]
+        wrapped = _manual_wrap_text(' '.join(test_page), wrap_chars, max_lines)
+        
+        # Count lines. If it's already at max_lines, check if adding word forces it over
+        if wrapped.count('\n') >= max_lines:
+            # Simple heuristic: if we already have words and adding one more feels "too crowded"
+            if current_page_words:
+                pages.append(current_page_words)
+                current_page_words = [word]
+                continue
+        
+        current_page_words.append(word)
+    
+    if current_page_words:
+        pages.append(current_page_words)
+
     phrases = []
+    global_word_idx = 0
     
-    for word_idx in range(1, len(words) + 1):
-        # Get words up to this point
-        accumulated_words = words[:word_idx]
-        accumulated_text = ' '.join(accumulated_words)
-        
-        # Estimate if text fits in screen width based on character count
-        # For fontsize 62, roughly 24 chars per line for 1080px width
-        # Max 2 lines = ~48 chars total
-        max_chars_display = wrap_chars * max_lines  # e.g., 24 * 2 = 48 chars
-        
-        if len(accumulated_text) <= max_chars_display:
-            # Fits comfortably, show all accumulated words
-            display_text = accumulated_text
-        else:
-            # Too long, use sliding window: show only recent words that fit
-            chars_so_far = 0
-            words_to_show = []
+    # 2. For each page, generate progressive steps
+    for page in pages:
+        for i in range(1, len(page) + 1):
+            accumulated_in_page = page[:i]
+            display_text = ' '.join(accumulated_in_page)
+            wrapped_text = _manual_wrap_text(display_text, wrap_chars, max_lines)
+            clean_text = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0)
             
-            # Go backwards from current word, adding words until we hit the limit
-            for i in range(len(accumulated_words) - 1, -1, -1):
-                word = accumulated_words[i]
-                if chars_so_far + len(word) + 1 <= max_chars_display:
-                    words_to_show.insert(0, word)
-                    chars_so_far += len(word) + 1
-                else:
-                    break
+            start_t = global_word_idx * time_per_word
+            end_t = (global_word_idx + 1) * time_per_word
             
-            display_text = ' '.join(words_to_show) if words_to_show else accumulated_words[-1]
-        
-        # Manually wrap text to max_lines by inserting newlines
-        wrapped_text = _manual_wrap_text(display_text, wrap_chars, max_lines)
-        
-        # Clean text
-        clean_text = _escape_ffmpeg_text(wrapped_text, max_chars=9999, max_lines=0)
-        
-        phrases.append({
-            'lines': clean_text.split('\n'),
-            'start': (word_idx - 1) * time_per_word,
-            'end': word_idx * time_per_word if word_idx < len(words) else audio_duration + 0.02
-        })
-    
-    # Limit to max_steps by sampling evenly if needed
+            # If it's the last word of the segment, extend to end
+            if global_word_idx == len(words) - 1:
+                end_t = audio_duration + 0.05
+                
+            phrases.append({
+                'lines': clean_text.split('\n'),
+                'start': start_t,
+                'end': end_t
+            })
+            global_word_idx += 1
+
+    # Limit steps if needed for FFmpeg performance
     if len(phrases) > max_steps:
         step = max(1, len(phrases) // max_steps)
-        sampled_phrases = []
+        sampled = []
         for i in range(0, len(phrases), step):
-            sampled_phrases.append(phrases[i])
-        # Always include the last phrase (complete text)
-        if sampled_phrases[-1] != phrases[-1]:
-            sampled_phrases.append(phrases[-1])
-        phrases = sampled_phrases[:max_steps]
-    
-    if not phrases:
-        phrases = [{'text': safe_text, 'start': 0, 'end': audio_duration}]
+            sampled.append(phrases[i])
+        # Fix timing of sampled phrases to cover holes
+        for i in range(len(sampled) - 1):
+            sampled[i]['end'] = sampled[i+1]['start']
+        phrases = sampled[:max_steps]
 
     filters = []
-
     for phrase_data in phrases:
         for i, line in enumerate(phrase_data['lines']):
-            if not line.strip(): continue # Skip empty lines
+            if not line.strip(): continue 
             
             line_y = f"({y_pos}) + {i} * ({fontsize} + {line_spacing})"
             
@@ -740,7 +738,6 @@ def _build_progressive_drawtext_filter(
             filters.append("".join(parts))
 
     return ",".join(filters)
-
 
 def _manual_wrap_text(text: str, wrap_chars: int, max_lines: int) -> str:
     """
