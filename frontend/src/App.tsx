@@ -40,6 +40,9 @@ interface Job {
     source?: string
     title?: string
     is_done?: boolean
+    preview_only?: boolean
+    script?: string
+    selected_videos?: Record<string, string>
 }
 
 interface Config {
@@ -1450,7 +1453,7 @@ function ConfigPanel({
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-function JobQueuePanel({ jobs, onClose }: { jobs: Job[], onClose?: () => void }) {
+function JobQueuePanel({ jobs, onPreview }: { jobs: Job[], onPreview: (job: Job) => void }) {
     if (!jobs || jobs.length === 0) return null
 
     return (
@@ -1519,27 +1522,154 @@ function JobQueuePanel({ jobs, onClose }: { jobs: Job[], onClose?: () => void })
                     )}
 
                     {job.status === 'done' && job.job_id && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                            <button
+                                onClick={() => onPreview(job)}
+                                style={{
+                                    padding: '8px',
+                                    background: 'rgba(255,255,255,0.1)',
+                                    border: '1px solid var(--border)',
+                                    color: 'white',
+                                    borderRadius: 6,
+                                    fontWeight: 600,
+                                    fontSize: 13,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                👁 Ver
+                            </button>
+                            <a
+                                href={`/api/download/${job.job_id}`}
+                                download
+                                style={{
+                                    display: 'block',
+                                    textAlign: 'center',
+                                    padding: '8px',
+                                    background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                                    color: 'white',
+                                    textDecoration: 'none',
+                                    borderRadius: 6,
+                                    fontWeight: 600,
+                                    fontSize: 13,
+                                }}
+                            >
+                                ⬇️ Descargar
+                            </a>
+                        </div>
+                    )}
+                </div>
+            ))}
+        </div>
+    )
+}
+
+function VideoPreviewModal({
+    isOpen,
+    job,
+    onClose,
+    onApplyVoice
+}: {
+    isOpen: boolean
+    job: Job | null
+    onClose: () => void
+    onApplyVoice: (job: Job) => void
+}) {
+    if (!isOpen || !job) return null
+
+    const videoUrl = `/api/download/${job.job_id}?t=${Date.now()}`
+
+    return (
+        <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            backdropFilter: 'blur(8px)',
+            animation: 'fadeIn 0.2s ease-out'
+        }} onClick={onClose}>
+            <div style={{
+                position: 'relative',
+                width: 'min(500px, 90vw)',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 20,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+                animation: 'scaleUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+            }} onClick={e => e.stopPropagation()}>
+
+                {/* Header */}
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 600 }}>Vista Previa de Video</div>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-2)', cursor: 'pointer', fontSize: 20 }}>✕</button>
+                </div>
+
+                {/* Content */}
+                <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <div style={{
+                        width: '100%',
+                        aspectRatio: '9/16',
+                        maxHeight: '60vh',
+                        background: '#000',
+                        borderRadius: 12,
+                        overflow: 'hidden'
+                    }}>
+                        <video
+                            src={videoUrl}
+                            controls
+                            autoPlay
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: job.preview_only ? '1fr 1fr' : '1fr', gap: 12 }}>
+                        {job.preview_only && (
+                            <button
+                                onClick={() => onApplyVoice(job)}
+                                style={{
+                                    padding: '12px',
+                                    background: 'var(--bg)',
+                                    border: '1px solid var(--accent)',
+                                    color: 'var(--accent)',
+                                    borderRadius: 10,
+                                    fontWeight: 700,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                🎙 Aplicar Voz y Generar
+                            </button>
+                        )}
                         <a
                             href={`/api/download/${job.job_id}`}
                             download
                             style={{
                                 display: 'block',
                                 textAlign: 'center',
-                                padding: '8px',
+                                padding: '12px',
                                 background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
                                 color: 'white',
                                 textDecoration: 'none',
-                                borderRadius: 6,
-                                fontWeight: 600,
-                                fontSize: 13,
-                                marginTop: 4,
+                                borderRadius: 10,
+                                fontWeight: 700,
                             }}
                         >
                             ⬇️ Descargar MP4
                         </a>
-                    )}
+                    </div>
                 </div>
-            ))}
+
+                <div style={{ padding: '12px 20px', background: 'rgba(255,255,255,0.03)', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'center' }}>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-2)', cursor: 'pointer', fontWeight: 600 }}>Cerrar</button>
+                </div>
+            </div>
         </div>
     )
 }
@@ -1570,6 +1700,7 @@ export default function App() {
     const [playingPreview, setPlayingPreview] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [jobsQueue, setJobsQueue] = useState<Job[]>([])
+    const [previewingJob, setPreviewingJob] = useState<Job | null>(null)
     const sseRef = useRef<EventSource | null>(null)
 
     // Poll global jobs queue every 2.5 seconds
@@ -1987,9 +2118,6 @@ export default function App() {
 
     return (
         <div className="app">
-            {/* Global Job Queue Panel */}
-            <JobQueuePanel jobs={jobsQueue} />
-
             {/* Config Panel overlay */}
             {showConfigPanel && (
                 <ConfigPanel
@@ -2309,6 +2437,33 @@ export default function App() {
                     }
                 }}
                 onClose={() => setPreviewingSeg(null)}
+            />
+
+            {/* Global Video Preview Modal */}
+            <VideoPreviewModal
+                isOpen={previewingJob !== null}
+                job={previewingJob}
+                onClose={() => setPreviewingJob(null)}
+                onApplyVoice={(j) => {
+                    setPreviewingJob(null)
+                    // Populate editor with job data
+                    if (j.script) setScript(j.script)
+                    if (j.selected_videos) {
+                        const rec: Record<number, string> = {}
+                        Object.entries(j.selected_videos).forEach(([k, v]) => {
+                            rec[Number(k)] = v
+                        })
+                        setSelectedVideos(rec)
+                    }
+                    // Trigger handleGenerate after state update (or rely on user clicking)
+                    // For now, just scroll top and show the fields
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+            />
+
+            <JobQueuePanel
+                jobs={jobsQueue}
+                onPreview={(j) => setPreviewingJob(j)}
             />
         </div>
     )
