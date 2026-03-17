@@ -618,9 +618,9 @@ def _build_progressive_drawtext_filter(
     bordercolor: str,
     font_name: str,
     extra: str,
-    max_steps: int,
-    wrap_chars: int,
-    max_lines: int,
+    max_steps: int = 150,
+    wrap_chars: int = 14,
+    max_lines: int = 2,
     output_path: str = "",
 ) -> str:
     import uuid
@@ -733,7 +733,7 @@ def _build_progressive_drawtext_filter(
                 f"y={line_y}:",
                 f"font={font_name}:",
                 "fix_bounds=true:",
-                f"enable='between(t,{phrase_data['start']:.2f},{phrase_data['end']:.2f})'",
+                f"enable='gte(t,{phrase_data['start']:.4f})*lt(t,{phrase_data['end']:.4f})'",
                 f"{extra}",
             ]
             filters.append("".join(parts))
