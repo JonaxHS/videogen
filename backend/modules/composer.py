@@ -662,11 +662,12 @@ def _build_progressive_drawtext_filter(
     # 1. Group words into pages based on the line limit
     for word in words:
         test_page = current_page_words + [word]
-        wrapped = _manual_wrap_text(' '.join(test_page), wrap_chars, max_lines)
+        # Use a large max_lines to see actual count
+        wrapped_for_test = _manual_wrap_text(' '.join(test_page), wrap_chars, max_lines=99)
+        line_count = wrapped_for_test.count('\n') + 1
         
-        # Count lines. If it's already at max_lines, check if adding word forces it over
-        if wrapped.count('\n') >= max_lines:
-            # Simple heuristic: if we already have words and adding one more feels "too crowded"
+        # If adding this word exceeds the line budget, start a new page
+        if line_count > max_lines:
             if current_page_words:
                 pages.append(current_page_words)
                 current_page_words = [word]
@@ -698,7 +699,7 @@ def _build_progressive_drawtext_filter(
             phrases.append({
                 'lines': clean_text.split('\n'),
                 'start': start_t,
-                'end': end_t
+                'end': end_t + (time_per_word * 0.9) # Give it 90% overlap with next or until next word
             })
             global_word_idx += 1
 
@@ -757,20 +758,14 @@ def _manual_wrap_text(text: str, wrap_chars: int, max_lines: int) -> str:
             current_line.append(word)
             current_length += space_needed + word_len
         else:
-            # Start new line
             if current_line:
                 lines.append(' '.join(current_line))
             current_line = [word]
             current_length = word_len
-            
-            # Stop if we've reached max_lines
-            if max_lines and len(lines) >= max_lines:
-                break
     
-    # Add last line if not at limit
-    if current_line and (not max_lines or len(lines) < max_lines):
+    if current_line:
         lines.append(' '.join(current_line))
-    
+        
     return '\n'.join(lines)
 
 
