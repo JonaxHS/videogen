@@ -699,7 +699,7 @@ def _build_progressive_drawtext_filter(
             phrases.append({
                 'lines': clean_text.split('\n'),
                 'start': start_t,
-                'end': end_t + (time_per_word * 0.9) # Give it 90% overlap with next or until next word
+                'end': end_t
             })
             global_word_idx += 1
 
