@@ -100,7 +100,7 @@ SUBTITLE_STYLES = {
         "y_offset": 280,
         "line_spacing": 20,
         "boxborderw": 0,
-        "borderw": 8,
+        "borderw": 2, # Reduced border as per user suggestion
         "bordercolor": "black",
         "mode": "progressive",
         "max_steps": 30,  # Allow more steps for word-by-word display
@@ -324,6 +324,8 @@ def _compose_segment(
             print(f"[Composer] Text has {len(words)} words: forcing progressive mode")
 
         if mode == "progressive" and not use_simple_mode:
+            # Collect temp files used for subtitles to delete them later
+            temp_subtitle_files = []
             drawtext_filter = _build_progressive_drawtext_filter(
                 text=text,
                 safe_text=safe_text,
@@ -341,8 +343,10 @@ def _compose_segment(
                 max_lines=max_lines,
                 extra_font_style=extra_font_style,
                 output_path=output_path,
+                temp_files_collect=temp_subtitle_files
             )
         else:
+            temp_subtitle_files = [] # Not used in static mode currently for simplicity
             clean_text = _escape_ffmpeg_text(text, max_chars=wrap_chars, max_lines=max_lines)
             lines = clean_text.split('\n')
             filters = []
@@ -604,14 +608,30 @@ def _compose_segment(
                     print(f"[Composer] ✓ Fallback (no subtitles) succeeded")
                     return
             
-            raise RuntimeError(
-                f"FFmpeg error composing segment:\n{error_msg}"
-            )
+            # If all fallbacks fail, raise the error
+            raise RuntimeError(f"FFmpeg failed with exit code {result.returncode}.\nstderr: {result.stderr[-500:]}")
+            
         print(f"[Composer] ✓ Segment composed successfully")
     except subprocess.TimeoutExpired:
         raise RuntimeError(
             f"FFmpeg timeout (>300s) composing segment. Check video/audio duration compatibility."
         )
+    finally:
+        # Clean up temporary subtitle text files
+        if 'temp_subtitle_files' in locals() and temp_subtitle_files:
+            for tf in temp_subtitle_files:
+                try:
+                    if os.path.exists(tf):
+                        os.remove(tf)
+                except Exception:
+                    pass
+            # Also try to remove the sub_texts directory if empty
+            try:
+                sub_dir = os.path.join(os.path.dirname(output_path) or ".", "sub_texts")
+                if os.path.exists(sub_dir) and os.path.isdir(sub_dir) and not os.listdir(sub_dir):
+                    os.rmdir(sub_dir)
+            except Exception:
+                pass
 
 
 def _build_progressive_drawtext_filter(
@@ -631,10 +651,16 @@ def _build_progressive_drawtext_filter(
     max_lines: int = 2,
     extra_font_style: str = "",
     output_path: str = "",
+    temp_files_collect: list = None,
 ) -> str:
     import uuid
     import os
+    import tempfile
+    
     temp_dir_local = os.path.dirname(output_path) or "."
+    sub_texts_dir = os.path.join(temp_dir_local, "sub_texts")
+    os.makedirs(sub_texts_dir, exist_ok=True)
+    
     words = [w for w in (text or "").split() if w.strip()]
     if len(words) <= 1 or audio_duration <= 0.2:
         clean_text = _escape_ffmpeg_text(text, max_chars=9999, max_lines=0)
@@ -745,11 +771,22 @@ def _build_progressive_drawtext_filter(
             # Combine font name and extra style
             full_font = f"{font_name}{extra_font_style}"
             
+            # Definitive Fix (textfile): Write line to a temp file to avoid encoding issues
+            # We use a unique name for each line file
+            txt_filename = f"step_{global_word_idx}_{i}_{uuid.uuid4().hex[:8]}.txt"
+            txt_path = os.path.join(sub_texts_dir, txt_filename)
+            
+            with open(txt_path, "w", encoding="utf-8") as tf:
+                tf.write(line)
+            
+            if temp_files_collect is not None:
+                temp_files_collect.append(txt_path)
+
             # Construct drawtext filter parts
-            # Stability Fix: Use fixed left alignment (w*0.1) instead of centered.
-            # Centering causes text to "jump" as the line length changes.
+            # Use 'between' for stability and 'textfile' for perfect encoding
+            txt_path_ffmpeg = txt_path.replace('\\', '/')
             parts = [
-                f"text='{line}'",
+                f"textfile='{txt_path_ffmpeg}'",
                 f"fontcolor={fontcolor}",
                 f"fontsize={fontsize}",
                 "box=0",
@@ -759,7 +796,7 @@ def _build_progressive_drawtext_filter(
                 f"y={line_y}",
                 f"font='{full_font}'",
                 "fix_bounds=true",
-                f"enable='gte(t,{start_t_safe:.4f})*lt(t,{end_t_safe:.4f})'"
+                f"enable='between(t,{start_t_safe:.4f},{end_t_safe:.4f})'"
             ]
             
             filter_str = "drawtext=" + ":".join(parts)
