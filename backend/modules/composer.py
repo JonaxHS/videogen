@@ -105,8 +105,9 @@ SUBTITLE_STYLES = {
         "mode": "progressive",
         "max_steps": 30,  # Allow more steps for word-by-word display
         "force_progressive": True,
-        "font": "DejaVu Sans Bold",
-        "wrap_chars": 24,
+        "font": "DejaVu Sans",
+        "extra_font_style": ":style=Bold",
+        "wrap_chars": 20,
         "max_lines": 2,
         "extra": ":shadowx=4:shadowy=4:shadowcolor=black@0.6"
     },
@@ -278,7 +279,8 @@ def _compose_segment(
         font_name = str(style.get("font", "Sans"))
         
         # reel-impact and similar heavy fonts look best in uppercase
-        if font_name == "DejaVu Sans Bold" or subtitle_style == "reel-impact":
+        # reel-impact and similar heavy fonts look best in uppercase
+        if font_name in ["DejaVu Sans Bold", "DejaVu Sans"] or subtitle_style == "reel-impact":
             text = text.upper()
             safe_text = safe_text.upper()
 
@@ -295,6 +297,7 @@ def _compose_segment(
         mode = str(style.get("mode", "static"))
         max_steps = int(style.get("max_steps", 4) or 4)  # Limit to 4 progressive steps max (VPS stability)
         extra = style["extra"]
+        extra_font_style = str(style.get("extra_font_style", ""))
         y_offset = int(style.get("y_offset", 120) or 120)
 
         # Calculate Y position based on position parameter
@@ -333,6 +336,8 @@ def _compose_segment(
                 max_steps=max_steps,
                 wrap_chars=wrap_chars,
                 max_lines=max_lines,
+                extra_font_style=extra_font_style,
+                output_path=output_path,
             )
         else:
             clean_text = _escape_ffmpeg_text(text, max_chars=wrap_chars, max_lines=max_lines)
@@ -621,6 +626,7 @@ def _build_progressive_drawtext_filter(
     max_steps: int = 150,
     wrap_chars: int = 14,
     max_lines: int = 2,
+    extra_font_style: str = "",
     output_path: str = "",
 ) -> str:
     import uuid
@@ -715,28 +721,44 @@ def _build_progressive_drawtext_filter(
         phrases = sampled[:max_steps]
 
     filters = []
+    
+    # Stability fix: If y_pos depends on (h-text_h), text_h changes as words appear!
+    # We replace text_h with a fixed estimate based on max_lines to prevent Jumping.
+    fixed_text_h = (fontsize * max_lines) + (line_spacing * (max_lines - 1))
+    stable_y_pos = str(y_pos).replace("text_h", str(fixed_text_h))
+
     for phrase_data in phrases:
         for i, line in enumerate(phrase_data['lines']):
             if not line.strip(): continue 
             
-            line_y = f"({y_pos}) + {i} * ({fontsize} + {line_spacing})"
+            # Use stable_y_pos so the first line is always at the same height
+            line_y = f"({stable_y_pos}) + {i} * ({fontsize} + {line_spacing})"
             
+            # Combine font name and extra style (e.g. DejaVu Sans + :style=Bold)
+            full_font = f"{font_name}{extra_font_style}"
+            
+            # Construct drawtext filter parts
+            # IMPORTANT: No colons at start/end of parts, joined with : later
             parts = [
-                "drawtext=",
-                f"text='{line}':",
-                f"fontcolor={fontcolor}:",
-                f"fontsize={fontsize}:",
-                "box=0:",
-                f"borderw={max(0, int(borderw))}:",
-                f"bordercolor={bordercolor}:",
-                "x=(w-text_w)/2:",
-                f"y={line_y}:",
-                f"font={font_name}:",
-                "fix_bounds=true:",
-                f"enable='gte(t,{phrase_data['start']:.4f})*lt(t,{phrase_data['end']:.4f})'",
-                f"{extra}",
+                f"text='{line}'",
+                f"fontcolor={fontcolor}",
+                f"fontsize={fontsize}",
+                "box=0",
+                f"borderw={max(0, int(borderw))}",
+                f"bordercolor={bordercolor}",
+                "x=(w-text_w)/2",
+                f"y={line_y}",
+                f"font='{full_font}'",
+                "fix_bounds=true",
+                f"enable='gte(t,{phrase_data['start']:.4f})*lt(t,{phrase_data['end']:.4f})'"
             ]
-            filters.append("".join(parts))
+            
+            # Add extra parameters from style (should already start with :)
+            filter_str = "drawtext=" + ":".join(parts)
+            if extra:
+                filter_str += extra # extra usually starts with :
+                
+            filters.append(filter_str)
 
     return ",".join(filters)
 
@@ -802,23 +824,19 @@ def _escape_ffmpeg_text(text: str, max_chars: int = 40, max_lines: int = 3, for_
     lines = [re.sub(r' +', ' ', line).strip() for line in lines]
     text = '\n'.join(lines)
     
-    # Order matters: handle newlines FIRST before other escaping
-    # For FFmpeg drawtext in shell, newline needs special handling
     if for_textfile:
         return text
     
-    text = text.replace('\n', '<<<NL>>>')  # Temporary placeholder
-    
-    # Now escape other special chars
-    text = text.replace('\\', '\\\\')    # Must be first
-    text = text.replace("'", "'\\''")    # Escape single quotes for shell
-    text = text.replace(':', '\\:')      # FFmpeg drawtext uses : as separator
+    # FFmpeg Drawtext Escaping (NOT shell escaping)
+    # 1. Backslashes must be escaped FIRST
+    text = text.replace('\\', '\\\\')
+    # 2. Single quotes must be escaped with a backslash for FFmpeg's parser
+    # if the text is wrapped in single quotes: text='...'
+    text = text.replace("'", "\\'")
+    # 3. Colons are special in drawtext filters
+    text = text.replace(':', '\\:')
+    # 4. Percent signs can trigger expansion
     text = text.replace('%', '\\%')
-    text = text.replace('[', '\\[')
-    text = text.replace(']', '\\]')
-    
-    # Replace newline placeholder with actual newline (will be preserved in single quotes)
-    text = text.replace('<<<NL>>>', '\n')
     
     return text
 
